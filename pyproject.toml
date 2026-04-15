@@ -1,0 +1,76 @@
+[project]
+name = "mcp-documents-reader"
+version = "1.4.0"
+description = "An MCP enabled multi-format document reader and writer supporting Office, PDF, text, EPUB, and presentation workflows"
+keywords = ["mcp", "model-context-protocol", "document-reader", "document-writer", "pdf", "docx", "pptx", "excel", "epub"]
+authors = [
+  { name = "xt765", email = "xt765@foxmail.com" }
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "mcp>=1.26.0",
+  "python-docx>=1.2.0",
+  "python-pptx>=0.6.23",
+  "pypdf>=6.8.0",
+  "openpyxl>=3.1.5",
+  "typing_extensions>=4.15.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/xt765/mcp_documents_reader"
+Repository = "https://github.com/xt765/mcp_documents_reader"
+Issues = "https://github.com/xt765/mcp_documents_reader/issues"
+Documentation = "https://github.com/xt765/mcp_documents_reader#readme"
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.8.0",
+  "basedpyright>=0.28.0",
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.24.0",
+  "pytest-cov>=6.0.0"
+]
+
+[project.scripts]
+mcp-documents-reader = "mcp_documents_reader:main"
+mcp_documents_reader = "mcp_documents_reader:main"
+
+[build-system]
+requires = ["hatchling>=1.14.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "ARG"]
+
+[tool.ruff.lint.per-file-ignores]
+"mcp_documents_reader.py" = ["ARG001"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-v --cov=mcp_documents_reader --cov-report=term-missing --cov-fail-under=90"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.basedpyright]
+typeCheckingMode = "standard"
+reportAttributeAccessIssue = "warning"
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
+reportUnusedParameter = "none"
+
+[tool.black]
+line-length = 88
+target-version = ["py38"]
+
+[dependency-groups]
+dev = [
+    "reportlab>=4.4.10",
+]

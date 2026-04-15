@@ -1,0 +1,37 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.xt765/mcp_documents_reader",
+  "title": "MCP Document Reader",
+  "description": "An MCP enabled multi-format document reader and writer supporting Office, PDF, text, EPUB, and presentation workflows",
+  "version": "1.4.0",
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "xt765"
+    }
+  ],
+  "keywords": [
+    "mcp",
+    "document-reader",
+    "document-writer",
+    "pdf",
+    "docx",
+    "pptx",
+    "excel",
+    "epub"
+  ],
+  "repository": {
+    "url": "https://github.com/xt765/mcp_documents_reader",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "mcp-documents-reader",
+      "version": "1.4.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
