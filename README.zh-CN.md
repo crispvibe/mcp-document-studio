@@ -4,13 +4,8 @@
 
 <p align="center"><strong>MCP（模型上下文协议）文档读取器 - 一个支持读取与生成 Office、PDF、文本、EPUB 和演示文档的多格式 MCP 服务。</strong></p>
 
-<p align="center">🌐 <strong>语言</strong>: <a href="README.md">English</a> | <a href="README.zh-CN.md">中文</a></p>
+<p align="center">🌐 <strong>语言</strong>: <a href="README.en.md">English</a> | <a href="README.md">中文</a></p>
 
-<p align="center">
-  <a href="https://blog.csdn.net/Yunyi_Chi"><img src="https://img.shields.io/badge/CSDN-玄同765-orange.svg?style=flat&logo=csdn" alt="CSDN"></a>
-  <a href="https://github.com/xt765/mcp_documents_reader"><img src="https://img.shields.io/badge/GitHub-mcp_documents_reader-black.svg?style=flat&logo=github" alt="GitHub"></a>
-  <a href="https://gitee.com/xt765/mcp_documents_reader"><img src="https://img.shields.io/badge/Gitee-mcp_documents_reader-red.svg?style=flat&logo=gitee" alt="Gitee"></a>
-</p>
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat&logo=opensourceinitiative" alt="License"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-blue.svg?style=flat&logo=python" alt="Python"></a>
@@ -332,7 +327,7 @@ if DocumentReaderFactory.is_supported("file.xlsx"):
 - Word 与 PowerPoint 文档写作、生成工作流
 - 面向 MCP 场景的更完整文档创作支持
 
-感谢原作者提供的基础能力与开源工作，使本项目的后续扩展成为可能。
+非常感谢原仓库作者提供的基础能力与开源工作。
 
 ## 贡献
 
