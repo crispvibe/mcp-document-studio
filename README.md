@@ -74,15 +74,16 @@ graph TB
 | 读取 | 文本 | `.txt` | 支持多编码文本提取 |
 | 读取 | CSV | `.csv` | 归一化为制表符分隔文本 |
 | 读取 | Markdown | `.md`, `.markdown` | 直接提取 Markdown 文本 |
-| 读取 | Word | `.doc`, `.docx` | `.doc` 通过命令 / LibreOffice 回退读取 |
+| 读取 | Word | `.doc`, `.docx` | `.doc` 通过命令 / LibreOffice / OLE 分片表解析回退读取 |
 | 读取 | PDF | `.pdf` | 提取文本 |
-| 读取 | PowerPoint | `.ppt`, `.pptx` | `.pptx` 原生解析，`.ppt` 回退读取 |
+| 读取 | PowerPoint | `.ppt`, `.pptx` | `.pptx` 原生解析，`.ppt` 通过 OLE 记录流解析回退读取 |
 | 读取 | EPUB | `.epub` | 基于 spine 顺序提取章节 |
 | 读取 | Excel | `.xlsx`, `.xls`, `.xlsm`, `.xlsb`, `.ods` | 提取工作表和单元格内容；`.xls`/`.xlsb`/`.ods` 通过 calamine / xls2csv / LibreOffice 回退读取 |
 | 读取 | HTML | `.html`, `.htm` | 提取正文文本，忽略脚本与样式 |
 | 读取 | JSON | `.json` | 解析并格式化输出，非法 JSON 回退为原文 |
 | 读取 | XML / YAML | `.xml`, `.yaml`, `.yml` | 多编码文本提取 |
 | 读取 | RTF | `.rtf` | 解析控制字并提取正文文本 |
+| 读取 | OpenDocument | `.odt`, `.odp` | 解析 content.xml 提取正文文本 |
 | 生成 | Word | `.docx` | 原生生成，支持段落和表格 |
 | 生成 | Word | `.doc` | 通过 `docx -> doc` 的 LibreOffice 转换生成 |
 | 生成 | PowerPoint | `.pptx` | 原生生成，支持标题、正文、要点、表格 |

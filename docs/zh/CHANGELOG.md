@@ -12,12 +12,14 @@
 - **电子表格生成工具**：新增 `write_spreadsheet`，支持多工作表 `.xlsx`、`.csv`（UTF-8 BOM）生成，以及 `.xls` 的 LibreOffice 转换导出
 - **文档转换工具**：新增 `convert_document`，通过 LibreOffice 将文档转换为 `pdf`、`docx`、`txt`、`html`、`csv` 等格式
 - **格式清单工具**：新增 `list_supported_formats`，返回可读写格式的 JSON 列表
-- **新增读取格式**：`.html` / `.htm`（忽略脚本与样式的正文提取）、`.json`（解析并格式化输出）、`.xml` / `.yaml` / `.yml`（文本提取）、`.rtf`（控制字解析）、`.xlsm` / `.xlsb` / `.ods`（电子表格读取）
-- **旧版二进制兜底提取**：`.doc` / `.ppt` / `.xls` 在无任何外部提取器的机器上（如未装 LibreOffice 的 Windows）回退到二进制文本流提取，保证开箱可读
+- **新增读取格式**：`.html` / `.htm`（忽略脚本与样式的正文提取）、`.json`（解析并格式化输出）、`.xml` / `.yaml` / `.yml`（文本提取）、`.rtf`（控制字解析）、`.xlsm` / `.xlsb` / `.ods`（电子表格读取）、`.odt` / `.odp`（OpenDocument content.xml 解析）
+- **旧版格式结构化解析**：`.doc` 通过 FIB 分片表解析 WordDocument 流、`.ppt` 通过记录流解析文本原子，零依赖即可近乎完整提取正文；最后仍有二进制文本流兜底，保证开箱可读
+- **olefile 依赖**：新增 `olefile` 用于 OLE 复合文档流访问
 - **calamine 回退**：新增 `python-calamine` 依赖，`.xls` / `.xlsb` / `.ods` 优先经由纯 Python 引擎读取
 
 ### 修复
 
+- **`.doc` / `.ppt` 正文识别率低**：原先纯二进制扫描会夹带元数据噪声并丢失顺序，现先经 OLE 结构解析，识别率大幅提升
 - **`.xls` 读取失效**：`.xls` 原先错误地走 openpyxl 路径必然报错，现支持 calamine、xls2csv 与 LibreOffice 转换多条回退链路
 - **PPTX 幻灯片顺序错误**：原先按文件名数字排序，现改为按 `presentation.xml` 的 `sldIdLst` 顺序读取（缺省时回退文件名排序）
 - **DOCX 内容顺序错乱**：段落与表格现按文档实际顺序交错提取，不再将全部表格堆到文末

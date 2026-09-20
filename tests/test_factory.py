@@ -19,6 +19,7 @@ from mcp_documents_reader import (
     HtmlReader,
     JsonReader,
     MarkdownReader,
+    OdfReader,
     PdfReader,
     PptReader,
     PptxReader,
@@ -59,6 +60,8 @@ class TestDocumentReaderFactory:
             ("config.yaml", TxtReader),
             ("config.yml", TxtReader),
             ("doc.rtf", RtfReader),
+            ("doc.odt", OdfReader),
+            ("slides.odp", OdfReader),
             ("data.xlsb", ExcelReader),
             ("data.xlsm", ExcelReader),
             ("data.ods", ExcelReader),
@@ -86,8 +89,7 @@ class TestDocumentReaderFactory:
     @pytest.mark.parametrize(
         "file_path",
         [
-            "test.odt",
-            "test.odp",
+            "test.wpd",
             "test.bmp",
             "test",
             "test.",
@@ -149,6 +151,8 @@ class TestDocumentReaderFactory:
             "test.xlsb",
             "test.xlsm",
             "test.ods",
+            "test.odt",
+            "test.odp",
         ],
     )
     def test_is_supported_returns_true(self, file_path: str) -> None:
@@ -163,7 +167,7 @@ class TestDocumentReaderFactory:
         "file_path",
         [
             "test.unknown",
-            "test.odt",
+            "test.wpd",
             "test.bmp",
             "test",
             "test.",
@@ -229,6 +233,8 @@ class TestDocumentReaderFactory:
         assert ".xlsb" in readers
         assert ".xlsm" in readers
         assert ".ods" in readers
+        assert ".odt" in readers
+        assert ".odp" in readers
 
         assert readers[".txt"] == TxtReader
         assert readers[".csv"] == CsvReader
@@ -252,6 +258,8 @@ class TestDocumentReaderFactory:
         assert readers[".xlsb"] == ExcelReader
         assert readers[".xlsm"] == ExcelReader
         assert readers[".ods"] == ExcelReader
+        assert readers[".odt"] == OdfReader
+        assert readers[".odp"] == OdfReader
 
     def test_supported_extensions_sorted_list(self) -> None:
         """测试 supported_extensions 返回排序后的扩展名列表。"""

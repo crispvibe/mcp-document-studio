@@ -5,6 +5,7 @@ import os
 import posixpath
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -221,6 +222,157 @@ def _extract_legacy_binary_text(file_path: str) -> str | None:
     if not runs:
         return None
     return "\n".join(runs[:500])
+
+
+def _open_ole_streams(file_path: str):
+    """Return an olefile OleFileIO, or None when unavailable/not OLE."""
+    try:
+        import olefile
+    except ImportError:
+        return None
+    try:
+        if not olefile.isOleFile(file_path):
+            return None
+        return olefile.OleFileIO(file_path)
+    except Exception:
+        return None
+
+
+def _extract_doc_text_ole(file_path: str) -> str | None:
+    """Extract text from a Word .doc via its FIB piece table.
+
+    Word 97-2003 documents store the main text in the "WordDocument" stream;
+    the piece table in the "0Table"/"1Table" stream (selected by the
+    fWhichTblStm flag) maps logical character positions to stream offsets,
+    where a piece is either UTF-16LE or compressed cp1252.
+    """
+    ole = _open_ole_streams(file_path)
+    if ole is None:
+        return None
+    try:
+        try:
+            word_stream = ole.openstream("WordDocument").read()
+        except Exception:
+            return None
+        if len(word_stream) < 0x220:
+            return None
+
+        table_name = "1Table" if word_stream[0x0B] & 0x02 else "0Table"
+        try:
+            table_stream = ole.openstream(table_name).read()
+        except Exception:
+            return None
+
+        (fc_clx,) = struct.unpack_from("<I", word_stream, 0x01A2)
+        (lcb_clx,) = struct.unpack_from("<I", word_stream, 0x01A6)
+        (ccp_text,) = struct.unpack_from("<I", word_stream, 0x004C)
+        if not lcb_clx or fc_clx + lcb_clx > len(table_stream):
+            return None
+
+        clx = table_stream[fc_clx : fc_clx + lcb_clx]
+        # Skip Prc blocks (clxt == 0x01), find the Pcdt block (clxt == 0x02).
+        offset = 0
+        pcdt = b""
+        while offset < len(clx):
+            clxt = clx[offset]
+            offset += 1
+            if clxt == 0x01:
+                (cb_size,) = struct.unpack_from("<H", clx, offset)
+                offset += 2 + cb_size
+            elif clxt == 0x02:
+                (lcb_size,) = struct.unpack_from("<I", clx, offset)
+                offset += 4
+                pcdt = clx[offset : offset + lcb_size]
+                break
+            else:
+                break
+        if not pcdt or len(pcdt) < 12:
+            return None
+
+        piece_count = (len(pcdt) - 4) // 12
+        cp_table = struct.unpack_from(f"<{piece_count + 1}I", pcdt, 0)
+        pcd_offset = 4 * (piece_count + 1)
+
+        parts: list[str] = []
+        for index in range(piece_count):
+            pcd = pcdt[pcd_offset + index * 8 : pcd_offset + index * 8 + 8]
+            if len(pcd) < 8:
+                continue
+            (fc_raw,) = struct.unpack_from("<I", pcd, 2)
+            char_count = cp_table[index + 1] - cp_table[index]
+            if char_count <= 0:
+                continue
+            if fc_raw & 0x40000000:
+                start = (fc_raw & 0x3FFFFFFF) // 2
+                piece = word_stream[start : start + char_count]
+                parts.append(piece.decode("cp1252", errors="ignore"))
+            else:
+                start = fc_raw
+                piece = word_stream[start : start + char_count * 2]
+                parts.append(piece.decode("utf-16-le", errors="ignore"))
+            if cp_table[-1] > 0 and len("".join(parts)) >= ccp_text * 4:
+                # Safety valve for corrupt piece tables
+                break
+
+        text = "".join(parts)
+        if not text.strip():
+            return None
+        text = text.replace("\r", "\n").replace("\x07", "\t").replace("\x0b", "\n")
+        return _normalize_text_chunks(text.splitlines(), "") or None
+    except Exception:
+        return None
+    finally:
+        try:
+            ole.close()
+        except Exception:
+            pass
+
+
+_PPT_TEXT_CHARS_ATOM = 4000  # UTF-16LE text
+_PPT_TEXT_BYTES_ATOM = 4008  # cp1252 text
+_PPT_CSTRING_ATOM = 4026  # UTF-16LE CString (comments/headings)
+
+
+def _extract_ppt_text_ole(file_path: str) -> str | None:
+    """Extract text from a PowerPoint .ppt via its record stream.
+
+    The "PowerPoint Document" stream is a sequence of records, each with an
+    8-byte header (2 bytes ver/instance, 2 bytes type, 4 bytes length).
+    Text-bearing records (4000, 4008, 4026) are decoded directly.
+    """
+    ole = _open_ole_streams(file_path)
+    if ole is None:
+        return None
+    try:
+        try:
+            stream = ole.openstream("PowerPoint Document").read()
+        except Exception:
+            return None
+
+        chunks: list[str] = []
+        index = 0
+        length = len(stream)
+        while index + 8 <= length:
+            _, record_type, record_len = struct.unpack_from("<HHI", stream, index)
+            payload = stream[index + 8 : index + 8 + record_len]
+            index += 8 + record_len
+            if record_type == _PPT_TEXT_CHARS_ATOM or record_type == _PPT_CSTRING_ATOM:
+                chunks.append(payload.decode("utf-16-le", errors="ignore"))
+            elif record_type == _PPT_TEXT_BYTES_ATOM:
+                chunks.append(payload.decode("cp1252", errors="ignore"))
+
+        text = "\n".join(chunk for chunk in chunks if chunk.strip())
+        if not text.strip():
+            return None
+        text = text.replace("\r", "\n").replace("\x0b", "\n")
+        return _normalize_text_chunks(text.splitlines(), "") or None
+    except Exception:
+        return None
+    finally:
+        try:
+            ole.close()
+        except Exception:
+            pass
 
 
 def _extract_text_with_libreoffice(file_path: str) -> str | None:
@@ -839,6 +991,7 @@ class DocReader(DocumentReader):
                 or _extract_text_with_textutil(file_path)
                 or _extract_text_with_command(file_path, "antiword")
                 or _extract_text_with_libreoffice(file_path)
+                or _extract_doc_text_ole(file_path)
                 or _extract_legacy_binary_text(file_path)
             )
             if extracted:
@@ -859,6 +1012,7 @@ class PptReader(DocumentReader):
                 _extract_text_with_mdls(file_path)
                 or _extract_text_with_command(file_path, "catppt")
                 or _extract_text_with_libreoffice(file_path)
+                or _extract_ppt_text_ole(file_path)
                 or _extract_legacy_binary_text(file_path)
             )
             if extracted:
@@ -964,6 +1118,28 @@ class EpubReader(DocumentReader):
                 return _normalize_text_chunks(text, "No text found in the EPUB.")
         except Exception as exc:
             return f"Error reading EPUB: {str(exc)}"
+
+
+class OdfReader(DocumentReader):
+    """OpenDocument text/presentation reader (.odt/.odp).
+
+    ODF files are ZIP archives whose content.xml holds all body text.
+    """
+
+    @override
+    def read(self, file_path: str) -> str:
+        try:
+            with zipfile.ZipFile(file_path) as archive:
+                try:
+                    content = archive.read("content.xml")
+                except KeyError:
+                    return "Error reading ODF: missing content.xml."
+                text = _extract_markup_text(content)
+                return text or "No text found in the ODF document."
+        except zipfile.BadZipFile:
+            return "Error reading ODF: not a valid ODF (zip) file."
+        except Exception as exc:
+            return f"Error reading ODF: {str(exc)}"
 
 
 def _csv_text_to_rows(text: str) -> list[str]:
@@ -1368,6 +1544,8 @@ class DocumentReaderFactory:
         ".yaml": TxtReader,
         ".yml": TxtReader,
         ".rtf": RtfReader,
+        ".odt": OdfReader,
+        ".odp": OdfReader,
     }
 
     @classmethod

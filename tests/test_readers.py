@@ -25,6 +25,7 @@ from mcp_documents_reader import (
     HtmlReader,
     JsonReader,
     MarkdownReader,
+    OdfReader,
     PdfReader,
     PptReader,
     PptxReader,
@@ -888,3 +889,190 @@ class TestLegacyBinaryExtraction:
         result = reader.read(str(rtf_path))
 
         assert "text" in result
+
+
+class _FakeOle:
+    """Minimal olefile stand-in serving pre-built streams."""
+
+    def __init__(self, streams: dict[str, bytes]) -> None:
+        self._streams = streams
+
+    def openstream(self, name: str):
+        import io as _io
+
+        if name not in self._streams:
+            raise OSError(f"no stream {name}")
+        return _io.BytesIO(self._streams[name])
+
+    def close(self) -> None:
+        pass
+
+
+def _build_doc_streams(
+    text_utf16: str, compressed_text: bytes = b""
+) -> dict[str, bytes]:
+    """Build a minimal WordDocument/1Table pair with a valid piece table."""
+    import struct as _st
+
+    word_stream = bytearray(0x220)
+    # fWhichTblStm flag -> use "1Table"
+    word_stream[0x0B] = 0x02
+    # ccpText at 0x4C
+    _st.pack_into("<I", word_stream, 0x4C, len(text_utf16) + len(compressed_text))
+
+    cps = [0]
+    pcds = []
+    if text_utf16:
+        fc = len(word_stream)
+        word_stream += text_utf16.encode("utf-16-le")
+        cps.append(cps[-1] + len(text_utf16))
+        pcds.append(fc)  # uncompressed -> UTF-16LE
+    if compressed_text:
+        fc = len(word_stream)
+        word_stream += compressed_text
+        cps.append(cps[-1] + len(compressed_text))
+        pcds.append((fc * 2) | 0x40000000)  # compressed -> cp1252
+
+    pcdt = b"".join(_st.pack("<I", cp) for cp in cps) + b"".join(
+        b"\x00\x00" + _st.pack("<I", fc) + b"\x00\x00" for fc in pcds
+    )
+    clx = b"\x02" + _st.pack("<I", len(pcdt)) + pcdt
+
+    table_stream = bytearray(64)
+    _st.pack_into("<I", word_stream, 0x1A2, len(table_stream))  # fcClx
+    _st.pack_into("<I", word_stream, 0x1A6, len(clx))  # lcbClx
+    table_stream += clx
+
+    return {"WordDocument": bytes(word_stream), "1Table": bytes(table_stream)}
+
+
+class TestOleExtraction:
+    """.doc 分片表与 .ppt 记录流的 OLE 解析测试。"""
+
+    def test_doc_ole_utf16(self, temp_document_dir: str) -> None:
+        doc_path = Path(temp_document_dir) / "real.doc"
+        doc_path.write_bytes(b"\xd0\xcf\x11\xe0" + b"\x00" * 32)
+        streams = _build_doc_streams("第一部分内容\r第二段落文字")
+
+        with (
+            mock.patch.multiple(
+                "mcp_documents_reader",
+                _extract_text_with_mdls=lambda *a: None,
+                _extract_text_with_textutil=lambda *a: None,
+                _extract_text_with_command=lambda *a: None,
+                _extract_text_with_libreoffice=lambda *a: None,
+            ),
+            mock.patch(
+                "mcp_documents_reader._open_ole_streams",
+                return_value=_FakeOle(streams),
+            ),
+        ):
+            result = DocReader().read(str(doc_path))
+
+        assert "第一部分内容" in result
+        assert "第二段落文字" in result
+
+    def test_doc_ole_compressed_piece(self, temp_document_dir: str) -> None:
+        doc_path = Path(temp_document_dir) / "mixed.doc"
+        doc_path.write_bytes(b"\xd0\xcf\x11\xe0" + b"\x00" * 32)
+        streams = _build_doc_streams("中文标题\r", b"English body text")
+
+        with (
+            mock.patch.multiple(
+                "mcp_documents_reader",
+                _extract_text_with_mdls=lambda *a: None,
+                _extract_text_with_textutil=lambda *a: None,
+                _extract_text_with_command=lambda *a: None,
+                _extract_text_with_libreoffice=lambda *a: None,
+            ),
+            mock.patch(
+                "mcp_documents_reader._open_ole_streams",
+                return_value=_FakeOle(streams),
+            ),
+        ):
+            result = DocReader().read(str(doc_path))
+
+        assert "中文标题" in result
+        assert "English body text" in result
+
+    def test_ppt_ole_records(self, temp_document_dir: str) -> None:
+        import struct as _st
+
+        ppt_path = Path(temp_document_dir) / "real.ppt"
+        ppt_path.write_bytes(b"\xd0\xcf\x11\xe0" + b"\x00" * 32)
+
+        def _record(rtype: int, payload: bytes) -> bytes:
+            return _st.pack("<HHI", 0, rtype, len(payload)) + payload
+
+        stream = (
+            _record(4000, "幻灯片标题".encode("utf-16-le"))
+            + _record(4008, b"Bullet point one")
+            + _record(4026, "演讲者备注".encode("utf-16-le"))
+            + _record(1006, b"\x00" * 10)  # unrelated record type
+        )
+
+        with (
+            mock.patch.multiple(
+                "mcp_documents_reader",
+                _extract_text_with_mdls=lambda *a: None,
+                _extract_text_with_command=lambda *a: None,
+                _extract_text_with_libreoffice=lambda *a: None,
+            ),
+            mock.patch(
+                "mcp_documents_reader._open_ole_streams",
+                return_value=_FakeOle({"PowerPoint Document": stream}),
+            ),
+        ):
+            result = PptReader().read(str(ppt_path))
+
+        assert "幻灯片标题" in result
+        assert "Bullet point one" in result
+        assert "演讲者备注" in result
+
+
+class TestOdfReader:
+    """ODF（.odt/.odp）读取测试。"""
+
+    def _make_odf(self, path: Path) -> Path:
+        content = (
+            '<?xml version="1.0"?>'
+            "<office:document-content "
+            'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+            'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">'
+            "<office:body><office:text>"
+            "<text:p>第一段 ODF 内容</text:p>"
+            "<text:p>Second paragraph</text:p>"
+            "</office:text></office:body></office:document-content>"
+        )
+        import zipfile as _zf
+
+        with _zf.ZipFile(path, "w") as z:
+            z.writestr("mimetype", "application/vnd.oasis.opendocument.text")
+            z.writestr("content.xml", content)
+        return path
+
+    def test_read_odt(self, temp_document_dir: str) -> None:
+        odt_path = self._make_odf(Path(temp_document_dir) / "doc.odt")
+        result = OdfReader().read(str(odt_path))
+
+        assert "第一段 ODF 内容" in result
+        assert "Second paragraph" in result
+
+    def test_read_odt_not_zip(self, temp_document_dir: str) -> None:
+        bad_path = Path(temp_document_dir) / "bad.odt"
+        bad_path.write_bytes(b"not a zip")
+
+        result = OdfReader().read(str(bad_path))
+
+        assert "Error reading ODF" in result
+
+    def test_read_odt_missing_content(self, temp_document_dir: str) -> None:
+        import zipfile as _zf
+
+        empty_path = Path(temp_document_dir) / "empty.odt"
+        with _zf.ZipFile(empty_path, "w") as z:
+            z.writestr("mimetype", "x")
+
+        result = OdfReader().read(str(empty_path))
+
+        assert "Error reading ODF" in result

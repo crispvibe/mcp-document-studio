@@ -165,6 +165,7 @@ readers_map = DocumentReaderFactory._readers
 | `.html`, `.htm` | HtmlReader |
 | `.json` | JsonReader |
 | `.rtf` | RtfReader |
+| `.odt`, `.odp` | OdfReader |
 | `.xml`, `.yaml`, `.yml` | TxtReader |
 
 ---

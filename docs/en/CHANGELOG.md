@@ -12,12 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Spreadsheet Generation Tool**: Added `write_spreadsheet` for multi-sheet `.xlsx`, `.csv` (UTF-8 BOM) generation, and `.xls` export via LibreOffice conversion
 - **Document Conversion Tool**: Added `convert_document` for LibreOffice-based conversion to `pdf`, `docx`, `txt`, `html`, `csv`, and more
 - **Format Listing Tool**: Added `list_supported_formats` returning readable and writable formats as JSON
-- **New Read Formats**: `.html` / `.htm` (body text extraction ignoring scripts and styles), `.json` (parsed and pretty-printed), `.xml` / `.yaml` / `.yml` (text extraction), `.rtf` (control-word parsing), `.xlsm` / `.xlsb` / `.ods` (spreadsheet reading)
-- **Legacy Binary Fallback**: `.doc` / `.ppt` / `.xls` fall back to binary text-stream extraction on machines without any external extractor (e.g. Windows without LibreOffice), keeping every advertised format readable out of the box
+- **New Read Formats**: `.html` / `.htm` (body text extraction ignoring scripts and styles), `.json` (parsed and pretty-printed), `.xml` / `.yaml` / `.yml` (text extraction), `.rtf` (control-word parsing), `.xlsm` / `.xlsb` / `.ods` (spreadsheet reading), `.odt` / `.odp` (OpenDocument content.xml parsing)
+- **Structured Legacy Parsing**: `.doc` is parsed via the FIB piece table of the WordDocument stream and `.ppt` via its text-atom record stream, extracting nearly complete body text with zero external tools; binary text-stream extraction remains as final fallback
+- **olefile Dependency**: added `olefile` for OLE compound-document stream access
 - **calamine Fallback**: added `python-calamine` dependency; `.xls` / `.xlsb` / `.ods` are read through a pure-Python engine first
 
 ### Fixed
 
+- **Low `.doc` / `.ppt` recall**: raw binary scanning previously emitted metadata noise and lost ordering; OLE structural parsing now runs first and dramatically improves recall
 - **`.xls` reading was broken**: legacy `.xls` files always failed through openpyxl; now they fall back to calamine, `xls2csv`, or LibreOffice conversion
 - **PPTX slide order**: slides are now read in `presentation.xml` `sldIdLst` order instead of filename numbering (filename ordering remains as fallback)
 - **DOCX content ordering**: paragraphs and tables are now extracted in document order instead of all tables being appended at the end

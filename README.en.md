@@ -74,15 +74,16 @@ graph TB
 | Read | Text | `.txt` | Multi-encoding text extraction |
 | Read | CSV | `.csv` | Tab-separated normalized output |
 | Read | Markdown | `.md`, `.markdown` | Plain markdown text extraction |
-| Read | Word | `.doc`, `.docx` | DOC uses command / LibreOffice fallbacks |
+| Read | Word | `.doc`, `.docx` | DOC via command / LibreOffice / OLE piece-table parsing |
 | Read | PDF | `.pdf` | Text extraction |
-| Read | PowerPoint | `.ppt`, `.pptx` | PPTX native parsing, PPT fallback extraction |
+| Read | PowerPoint | `.ppt`, `.pptx` | PPTX native parsing, PPT via OLE record-stream parsing |
 | Read | EPUB | `.epub` | Spine-based section extraction |
 | Read | Excel | `.xlsx`, `.xls`, `.xlsm`, `.xlsb`, `.ods` | Sheet and cell extraction; `.xls`/`.xlsb`/`.ods` via calamine / xls2csv / LibreOffice fallback |
 | Read | HTML | `.html`, `.htm` | Body text extraction; scripts and styles ignored |
 | Read | JSON | `.json` | Parsed and pretty-printed; invalid JSON returns raw text |
 | Read | XML / YAML | `.xml`, `.yaml`, `.yml` | Multi-encoding text extraction |
 | Read | RTF | `.rtf` | Control-word parsing with body text extraction |
+| Read | OpenDocument | `.odt`, `.odp` | Body text from content.xml |
 | Write | Word | `.docx` | Native generation with paragraphs and tables |
 | Write | Word | `.doc` | Generated via `docx -> doc` LibreOffice conversion |
 | Write | PowerPoint | `.pptx` | Native generation with title, text, bullets, tables |

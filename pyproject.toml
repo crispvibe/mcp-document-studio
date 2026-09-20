@@ -15,6 +15,7 @@ dependencies = [
   "pypdf>=6.8.0",
   "openpyxl>=3.1.5",
   "python-calamine>=0.3.0",
+  "olefile>=0.47",
   "typing_extensions>=4.15.0"
 ]
 
