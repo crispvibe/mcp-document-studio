@@ -131,6 +131,14 @@ pip install -e .
 - `filename` (string, 必填): DOCX 文件路径。
 - `output_dir` (string, 可选): 导出图片的目录。
 
+### `read_document_images`
+
+提取文档内嵌图片并以图像内容块返回，调用方模型可直接“看图”识别（无需服务端 OCR）。支持 DOCX / PPTX / XLSX / EPUB / PDF（含扫描页的页面图片），以及 `.doc` / `.ppt` / `.xls` 的内嵌图片签名扫描。
+
+**参数：**
+- `filename` (string, 必填): 文档文件路径。
+- `max_images` (integer, 可选): 最多返回的图片数，默认 20。
+
 ### `write_word_document`
 
 生成 `.docx` Word 文档，或通过 LibreOffice 转换导出 `.doc`。
@@ -306,6 +314,15 @@ if DocumentReaderFactory.is_supported("file.xlsx"):
 |------|------|------|------|
 | filename | string | ✅ | DOCX 文件路径 |
 | output_dir | string | ❌ | 可选的图片导出目录 |
+
+### read_document_images
+
+将文档内嵌图片作为图像内容块返回，模型可直接识别。
+
+| 参数 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| filename | string | ✅ | 文档文件路径 |
+| max_images | integer | ❌ | 最多返回图片数，默认 20 |
 
 ### write_word_document
 

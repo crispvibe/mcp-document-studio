@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Spreadsheet Generation Tool**: Added `write_spreadsheet` for multi-sheet `.xlsx`, `.csv` (UTF-8 BOM) generation, and `.xls` export via LibreOffice conversion
 - **Document Conversion Tool**: Added `convert_document` for LibreOffice-based conversion to `pdf`, `docx`, `txt`, `html`, `csv`, and more
 - **Format Listing Tool**: Added `list_supported_formats` returning readable and writable formats as JSON
+- **Direct Image Reading**: Added `read_document_images`, which returns embedded images as image content blocks for the calling model to view (covers DOCX / PPTX / XLSX / EPUB / PDF scanned pages; `.doc` / `.ppt` / `.xls` via signature scanning)
 - **New Read Formats**: `.html` / `.htm` (body text extraction ignoring scripts and styles), `.json` (parsed and pretty-printed), `.xml` / `.yaml` / `.yml` (text extraction), `.rtf` (control-word parsing), `.xlsm` / `.xlsb` / `.ods` (spreadsheet reading), `.odt` / `.odp` (OpenDocument content.xml parsing)
 - **Structured Legacy Parsing**: `.doc` is parsed via the FIB piece table of the WordDocument stream and `.ppt` via its text-atom record stream, extracting nearly complete body text with zero external tools; binary text-stream extraction remains as final fallback
 - **olefile Dependency**: added `olefile` for OLE compound-document stream access

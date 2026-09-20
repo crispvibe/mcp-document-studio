@@ -219,6 +219,19 @@ Extract embedded images from a DOCX file and return structured JSON metadata.
 
 **Returns:** JSON string with image metadata and exported file paths.
 
+### read_document_images
+
+Extract embedded images and return them as image content blocks the calling model can view directly — no server-side OCR needed. Supports DOCX / PPTX / XLSX / EPUB / PDF (scanned pages surface as embedded page images) and legacy `.doc` / `.ppt` / `.xls` via image-signature scanning.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `filename` | string | Yes | Path to the document file |
+| `max_images` | integer | No | Maximum number of images to return (default 20) |
+
+**Returns:** A text summary followed by one image block per embedded image.
+
 ### write_word_document
 
 Generate a `.docx` Word document, or export `.doc` via LibreOffice conversion.

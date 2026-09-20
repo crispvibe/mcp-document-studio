@@ -24,7 +24,7 @@ from docx.oxml.ns import qn
 from docx.parts.image import ImagePart
 from docx.table import Table as DocxTable
 from docx.text.paragraph import Paragraph as DocxParagraph
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image
 from openpyxl import Workbook, load_workbook
 from pypdf import PdfReader as PyPdfReader
 from typing_extensions import override
@@ -373,6 +373,117 @@ def _extract_ppt_text_ole(file_path: str) -> str | None:
             ole.close()
         except Exception:
             pass
+
+
+# --- Embedded image collection -------------------------------------------
+
+_IMAGE_EXT_TO_FORMAT = {
+    ".png": "png",
+    ".jpg": "jpeg",
+    ".jpeg": "jpeg",
+    ".gif": "gif",
+    ".webp": "webp",
+    ".bmp": "bmp",
+    ".tif": "tiff",
+    ".tiff": "tiff",
+}
+
+_OOXML_MEDIA_PREFIXES = {
+    ".docx": "word/media/",
+    ".pptx": "ppt/media/",
+    ".xlsx": "xl/media/",
+}
+
+# (magic bytes, format, end marker, bytes after end marker included)
+_IMAGE_SIGNATURES: tuple[tuple[bytes, str, bytes, int], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "png", b"IEND", 8),
+    (b"\xff\xd8\xff", "jpeg", b"\xff\xd9", 0),
+    (b"GIF8", "gif", b"\x3b", 1),
+)
+
+
+def _iter_embedded_image_blobs(
+    data: bytes, min_size: int = 256
+) -> Iterator[tuple[str, bytes]]:
+    """Yield (format, blob) for images embedded inside a binary blob."""
+    offset = 0
+    while True:
+        best_start = -1
+        best: tuple[str, bytes, int] | None = None
+        for signature, fmt, end_marker, trailer in _IMAGE_SIGNATURES:
+            position = data.find(signature, offset)
+            if position != -1 and (best_start == -1 or position < best_start):
+                best_start = position
+                best = (fmt, end_marker, trailer)
+        if best is None or best_start == -1:
+            return
+        fmt, end_marker, trailer = best
+        end_position = data.find(end_marker, best_start)
+        end = (
+            len(data)
+            if end_position == -1
+            else end_position + len(end_marker) + trailer
+        )
+        blob = data[best_start:end]
+        offset = max(end, best_start + 1)
+        if len(blob) >= min_size:
+            yield fmt, blob
+
+
+def _collect_zip_images(
+    file_path: str, media_prefix: str | None
+) -> list[tuple[str, str, bytes]]:
+    results: list[tuple[str, str, bytes]] = []
+    with zipfile.ZipFile(file_path) as archive:
+        for name in sorted(archive.namelist()):
+            suffix = Path(name).suffix.lower()
+            fmt = _IMAGE_EXT_TO_FORMAT.get(suffix)
+            if fmt is None:
+                continue
+            if media_prefix is not None and not name.startswith(media_prefix):
+                continue
+            results.append((name, fmt, archive.read(name)))
+    return results
+
+
+def _collect_pdf_images(file_path: str) -> list[tuple[str, str, bytes]]:
+    pdf_reader = PyPdfReader(file_path)
+    if pdf_reader.is_encrypted:
+        try:
+            pdf_reader.decrypt("")
+        except Exception:
+            pass
+    results: list[tuple[str, str, bytes]] = []
+    for page_number, page in enumerate(pdf_reader.pages, start=1):
+        for image in page.images:
+            suffix = Path(image.name).suffix.lower()
+            fmt = _IMAGE_EXT_TO_FORMAT.get(suffix, "png")
+            results.append((f"page{page_number}_{image.name}", fmt, image.data))
+    return results
+
+
+def _collect_document_images(file_path: str) -> list[tuple[str, str, bytes]]:
+    """Return (name, image-format, bytes) for every image embedded in a file."""
+    path = Path(file_path)
+    ext = path.suffix.lower()
+    try:
+        if ext == ".pdf":
+            return _collect_pdf_images(file_path)
+        if ext in _OOXML_MEDIA_PREFIXES:
+            return _collect_zip_images(file_path, _OOXML_MEDIA_PREFIXES[ext])
+        if ext == ".epub":
+            return _collect_zip_images(file_path, None)
+        if ext in {".doc", ".ppt", ".xls"}:
+            data = path.read_bytes()
+            return [
+                (f"embedded_{index}.{fmt}", fmt, blob)
+                for index, (fmt, blob) in enumerate(
+                    _iter_embedded_image_blobs(data), start=1
+                )
+            ]
+    except Exception:
+        return []
+    return []
 
 
 def _extract_text_with_libreoffice(file_path: str) -> str | None:
@@ -1630,6 +1741,47 @@ def extract_document_images(filename: str, output_dir: str | None = None) -> str
         return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
         return f"Error extracting document images: {str(e)}"
+
+
+@mcp.tool()
+def read_document_images(filename: str, max_images: int = 20):
+    """
+    Extracts embedded images and returns them as image content blocks that the
+    calling model can view directly — no OCR or external tooling needed.
+
+    Supports DOCX, PPTX, XLSX (media entries), EPUB (manifest images), PDF
+    (embedded page images, which is how scanned pages are exposed), and
+    legacy .doc/.ppt/.xls via embedded image-signature scanning.
+
+    :param filename: Path to the document file
+    :param max_images: Maximum number of images to return (default 20)
+    :return: Text summary plus one image block per embedded image
+    """
+    file_path = Path(filename).expanduser()
+
+    if not file_path.exists():
+        return [f"Error: File '{filename}' not found."]
+
+    ext = file_path.suffix.lower()
+    if ext not in {".pdf", ".epub", ".doc", ".ppt", ".xls"} | set(
+        _OOXML_MEDIA_PREFIXES
+    ):
+        return [f"Error: No image extraction support for '{ext}' files."]
+
+    images = _collect_document_images(str(file_path))
+    if not images:
+        return [f"No embedded images found in '{file_path.name}'."]
+
+    cap = max(1, max_images)
+    shown = images[:cap]
+    blocks: list = [
+        f"Found {len(images)} embedded image(s) in {file_path.name}"
+        + (f"; showing first {len(shown)}." if len(images) > cap else ".")
+    ]
+    for name, fmt, blob in shown:
+        blocks.append(f"Image: {name} ({fmt}, {len(blob)} bytes)")
+        blocks.append(Image(data=blob, format=fmt))
+    return blocks
 
 
 @mcp.tool()

@@ -219,6 +219,19 @@ content = read_document(filename="notes.txt")
 
 **返回：** 包含图片元数据与导出路径的 JSON 字符串。
 
+### read_document_images
+
+提取文档内嵌图片并以图像内容块返回，调用方模型可直接看图识别（无需服务端 OCR）。支持 DOCX / PPTX / XLSX / EPUB / PDF（扫描页即页面图片），以及 `.doc` / `.ppt` / `.xls` 的内嵌图片签名扫描。
+
+**参数：**
+
+| 参数 | 类型 | 必需 | 描述 |
+|------|------|------|------|
+| `filename` | string | 是 | 文档文件路径 |
+| `max_images` | integer | 否 | 最多返回的图片数，默认 20 |
+
+**返回：** 文本摘要后跟每张图片一个图像内容块。
+
 ### write_word_document
 
 生成 `.docx` Word 文档，或通过 LibreOffice 转换导出 `.doc`。

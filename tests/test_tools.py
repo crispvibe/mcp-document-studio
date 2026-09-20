@@ -7,6 +7,7 @@
 import base64
 import json
 import os
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -498,3 +499,145 @@ class TestListSupportedFormats:
         assert ".docx" in payload["write"]["word"]
         assert ".pptx" in payload["write"]["presentation"]
         assert ".xlsx" in payload["write"]["spreadsheet"]
+
+
+def _fake_png(size: int = 300) -> bytes:
+    """伪造足够大的 PNG blob（签名 + 填充 + IEND），用于签名扫描。"""
+    return b"\x89PNG\r\n\x1a\n" + b"\x00" * (size - 20) + b"IEND" + b"\x00" * 8
+
+
+class TestReadDocumentImages:
+    """read_document_images 工具测试。"""
+
+    def test_returns_image_blocks_for_docx(self, tmp_path: Path) -> None:
+        from mcp_documents_reader import read_document_images
+
+        docx_path = tmp_path / "with_image.docx"
+        with zipfile.ZipFile(docx_path, "w") as archive:
+            archive.writestr("[Content_Types].xml", "<xml/>")
+            archive.writestr("word/media/image1.png", _fake_png())
+            archive.writestr(
+                "word/media/photo.jpg", b"\xff\xd8\xff" + b"\x00" * 300 + b"\xff\xd9"
+            )
+
+        result = read_document_images(str(docx_path))
+
+        assert isinstance(result, list)
+        assert "Found 2 embedded image(s)" in result[0]
+        image_blocks = [b for b in result if getattr(b, "data", None)]
+        assert len(image_blocks) == 2
+
+    def test_legacy_doc_signature_scan(self, tmp_path: Path) -> None:
+        from mcp_documents_reader import read_document_images
+
+        doc_path = tmp_path / "old.doc"
+        doc_path.write_bytes(
+            b"\xd0\xcf\x11\xe0" + b"\x00" * 100 + _fake_png() + b"\x00" * 50
+        )
+
+        result = read_document_images(str(doc_path))
+
+        assert "Found 1 embedded image(s)" in result[0]
+        image_blocks = [b for b in result if getattr(b, "data", None)]
+        assert len(image_blocks) == 1
+
+    def test_epub_images(self, tmp_path: Path) -> None:
+        from mcp_documents_reader import read_document_images
+
+        epub_path = tmp_path / "book.epub"
+        with zipfile.ZipFile(epub_path, "w") as archive:
+            archive.writestr("OEBPS/cover.png", _fake_png())
+            archive.writestr("OEBPS/text.xhtml", "<p>hi</p>")
+
+        result = read_document_images(str(epub_path))
+
+        assert "Found 1 embedded image(s)" in result[0]
+
+    def test_max_images_cap(self, tmp_path: Path) -> None:
+        from mcp_documents_reader import read_document_images
+
+        xlsx_path = tmp_path / "book.xlsx"
+        with zipfile.ZipFile(xlsx_path, "w") as archive:
+            for index in range(5):
+                archive.writestr(f"xl/media/img{index}.png", _fake_png())
+
+        result = read_document_images(str(xlsx_path), max_images=2)
+
+        assert "showing first 2" in result[0]
+        image_blocks = [b for b in result if getattr(b, "data", None)]
+        assert len(image_blocks) == 2
+
+    def test_unsupported_extension(self, tmp_path: Path) -> None:
+        from mcp_documents_reader import read_document_images
+
+        txt_path = tmp_path / "file.txt"
+        txt_path.write_text("hello")
+
+        result = read_document_images(str(txt_path))
+
+        assert result[0].startswith("Error:")
+
+    def test_missing_file(self, tmp_path: Path) -> None:
+        from mcp_documents_reader import read_document_images
+
+        result = read_document_images(str(tmp_path / "nope.docx"))
+
+        assert "not found" in result[0]
+
+    def test_no_images_found(self, tmp_path: Path) -> None:
+        from mcp_documents_reader import read_document_images
+
+        docx_path = tmp_path / "plain.docx"
+        with zipfile.ZipFile(docx_path, "w") as archive:
+            archive.writestr("[Content_Types].xml", "<xml/>")
+
+        result = read_document_images(str(docx_path))
+
+        assert "No embedded images" in result[0]
+
+    def test_pdf_page_images(self, tmp_path: Path) -> None:
+        from mcp_documents_reader import read_document_images
+
+        pdf_path = tmp_path / "scan.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 fake")
+
+        fake_image = mock.MagicMock()
+        fake_image.name = "page_scan.png"
+        fake_image.data = _fake_png()
+        fake_page = mock.MagicMock()
+        fake_page.images = [fake_image]
+        fake_reader = mock.MagicMock()
+        fake_reader.is_encrypted = False
+        fake_reader.pages = [fake_page]
+
+        with mock.patch("mcp_documents_reader.PyPdfReader", return_value=fake_reader):
+            result = read_document_images(str(pdf_path))
+
+        assert "Found 1 embedded image(s)" in result[0]
+        assert "page1_page_scan.png" in result[1]
+
+    def test_corrupt_container_returns_no_images(self, tmp_path: Path) -> None:
+        from mcp_documents_reader import read_document_images
+
+        bad_path = tmp_path / "corrupt.docx"
+        bad_path.write_bytes(b"not a zip at all")
+
+        result = read_document_images(str(bad_path))
+
+        assert "No embedded images" in result[0]
+
+
+class TestIterEmbeddedImageBlobs:
+    def test_skips_tiny_blobs(self) -> None:
+        from mcp_documents_reader import _iter_embedded_image_blobs
+
+        tiny = b"\x89PNG\r\n\x1a\n" + b"IEND" + b"\x00" * 8
+        assert list(_iter_embedded_image_blobs(tiny)) == []
+
+    def test_unterminated_blob_runs_to_eof(self) -> None:
+        from mcp_documents_reader import _iter_embedded_image_blobs
+
+        data = b"\xff\xd8\xff" + b"\x00" * 400  # no EOI marker
+        blobs = list(_iter_embedded_image_blobs(data))
+        assert len(blobs) == 1
+        assert blobs[0][0] == "jpeg"

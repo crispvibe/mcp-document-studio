@@ -12,6 +12,7 @@
 - **电子表格生成工具**：新增 `write_spreadsheet`，支持多工作表 `.xlsx`、`.csv`（UTF-8 BOM）生成，以及 `.xls` 的 LibreOffice 转换导出
 - **文档转换工具**：新增 `convert_document`，通过 LibreOffice 将文档转换为 `pdf`、`docx`、`txt`、`html`、`csv` 等格式
 - **格式清单工具**：新增 `list_supported_formats`，返回可读写格式的 JSON 列表
+- **图片直读工具**：新增 `read_document_images`，把文档内嵌图片作为图像内容块直接交给调用方模型识别（覆盖 DOCX / PPTX / XLSX / EPUB / PDF 扫描页，`.doc` / `.ppt` / `.xls` 经签名扫描兜底）
 - **新增读取格式**：`.html` / `.htm`（忽略脚本与样式的正文提取）、`.json`（解析并格式化输出）、`.xml` / `.yaml` / `.yml`（文本提取）、`.rtf`（控制字解析）、`.xlsm` / `.xlsb` / `.ods`（电子表格读取）、`.odt` / `.odp`（OpenDocument content.xml 解析）
 - **旧版格式结构化解析**：`.doc` 通过 FIB 分片表解析 WordDocument 流、`.ppt` 通过记录流解析文本原子，零依赖即可近乎完整提取正文；最后仍有二进制文本流兜底，保证开箱可读
 - **olefile 依赖**：新增 `olefile` 用于 OLE 复合文档流访问
