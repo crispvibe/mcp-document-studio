@@ -78,11 +78,18 @@ graph TB
 | Read | PDF | `.pdf` | Text extraction |
 | Read | PowerPoint | `.ppt`, `.pptx` | PPTX native parsing, PPT fallback extraction |
 | Read | EPUB | `.epub` | Spine-based section extraction |
-| Read | Excel | `.xlsx`, `.xls` | Sheet and cell extraction |
+| Read | Excel | `.xlsx`, `.xls`, `.xlsm`, `.xlsb`, `.ods` | Sheet and cell extraction; `.xls`/`.xlsb`/`.ods` via calamine / xls2csv / LibreOffice fallback |
+| Read | HTML | `.html`, `.htm` | Body text extraction; scripts and styles ignored |
+| Read | JSON | `.json` | Parsed and pretty-printed; invalid JSON returns raw text |
+| Read | XML / YAML | `.xml`, `.yaml`, `.yml` | Multi-encoding text extraction |
+| Read | RTF | `.rtf` | Control-word parsing with body text extraction |
 | Write | Word | `.docx` | Native generation with paragraphs and tables |
 | Write | Word | `.doc` | Generated via `docx -> doc` LibreOffice conversion |
 | Write | PowerPoint | `.pptx` | Native generation with title, text, bullets, tables |
 | Write | PowerPoint | `.ppt` | Generated via `pptx -> ppt` LibreOffice conversion |
+| Write | Excel | `.xlsx` | Native multi-sheet generation with headers and native cell types |
+| Write | CSV | `.csv` | UTF-8 (with BOM) delimited output |
+| Write | Excel | `.xls` | Generated via `xlsx -> xls` LibreOffice conversion |
 
 ## Installation
 
@@ -142,6 +149,31 @@ Generate a PowerPoint presentation in `.pptx`, or export `.ppt` via LibreOffice 
 - `title` (string, optional): Title slide title.
 - `subtitle` (string, optional): Title slide subtitle.
 - `slides` (object array, optional): Slide specs containing `title`, `paragraphs`, `bullets`, and `table`.
+
+### `write_spreadsheet`
+
+Generate a multi-sheet `.xlsx` spreadsheet or `.csv` file, or export `.xls` via LibreOffice conversion.
+
+**Arguments:**
+- `filename` (string, required): Output path ending with `.xlsx`, `.csv`, or `.xls`.
+- `sheets` (object array, optional): Sheet specs with `name`, `headers`, and `rows`.
+- `headers` (string array, optional): Single-sheet headers (used when `sheets` is empty).
+- `rows` (object array, optional): Single-sheet data rows (used when `sheets` is empty).
+
+### `convert_document`
+
+Convert a document to another format via LibreOffice (e.g. `docx -> pdf`).
+
+**Arguments:**
+- `filename` (string, required): Source document path.
+- `target_format` (string, required): Target extension such as `pdf`, `docx`, `txt`, `html`, `csv`.
+- `output_dir` (string, optional): Output directory (defaults to the source directory).
+
+### `list_supported_formats`
+
+List all formats supported for reading and writing as JSON.
+
+**Arguments:** None.
 
 ## Configuration
 

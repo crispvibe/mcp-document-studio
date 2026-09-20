@@ -78,11 +78,18 @@ graph TB
 | 读取 | PDF | `.pdf` | 提取文本 |
 | 读取 | PowerPoint | `.ppt`, `.pptx` | `.pptx` 原生解析，`.ppt` 回退读取 |
 | 读取 | EPUB | `.epub` | 基于 spine 顺序提取章节 |
-| 读取 | Excel | `.xlsx`, `.xls` | 提取工作表和单元格内容 |
+| 读取 | Excel | `.xlsx`, `.xls`, `.xlsm`, `.xlsb`, `.ods` | 提取工作表和单元格内容；`.xls`/`.xlsb`/`.ods` 通过 calamine / xls2csv / LibreOffice 回退读取 |
+| 读取 | HTML | `.html`, `.htm` | 提取正文文本，忽略脚本与样式 |
+| 读取 | JSON | `.json` | 解析并格式化输出，非法 JSON 回退为原文 |
+| 读取 | XML / YAML | `.xml`, `.yaml`, `.yml` | 多编码文本提取 |
+| 读取 | RTF | `.rtf` | 解析控制字并提取正文文本 |
 | 生成 | Word | `.docx` | 原生生成，支持段落和表格 |
 | 生成 | Word | `.doc` | 通过 `docx -> doc` 的 LibreOffice 转换生成 |
 | 生成 | PowerPoint | `.pptx` | 原生生成，支持标题、正文、要点、表格 |
 | 生成 | PowerPoint | `.ppt` | 通过 `pptx -> ppt` 的 LibreOffice 转换生成 |
+| 生成 | Excel | `.xlsx` | 原生生成，支持多工作表、表头和原生数值类型 |
+| 生成 | CSV | `.csv` | 生成 UTF-8（含 BOM）分隔文件 |
+| 生成 | Excel | `.xls` | 通过 `xlsx -> xls` 的 LibreOffice 转换生成 |
 
 ## 安装
 
@@ -142,6 +149,31 @@ pip install -e .
 - `title` (string, 可选): 标题页标题。
 - `subtitle` (string, 可选): 标题页副标题。
 - `slides` (object 数组, 可选): 幻灯片定义，支持 `title`、`paragraphs`、`bullets`、`table`。
+
+### `write_spreadsheet`
+
+生成 `.xlsx` 多工作表电子表格或 `.csv` 文件，或通过 LibreOffice 转换导出 `.xls`。
+
+**参数：**
+- `filename` (string, 必填): 输出路径，后缀必须为 `.xlsx`、`.csv` 或 `.xls`。
+- `sheets` (object 数组, 可选): 工作表定义，支持 `name`、`headers`、`rows`。
+- `headers` (string 数组, 可选): 单工作表表头（未提供 `sheets` 时生效）。
+- `rows` (object 数组, 可选): 单工作表数据行（未提供 `sheets` 时生效）。
+
+### `convert_document`
+
+通过 LibreOffice 将文档转换为其他格式（如 `docx -> pdf`）。
+
+**参数：**
+- `filename` (string, 必填): 源文档路径。
+- `target_format` (string, 必填): 目标扩展名，如 `pdf`、`docx`、`txt`、`html`、`csv`。
+- `output_dir` (string, 可选): 输出目录，默认为源文件所在目录。
+
+### `list_supported_formats`
+
+列出所有支持读取与写入的文件格式，返回 JSON。
+
+**参数：** 无。
 
 ## 配置
 
@@ -295,6 +327,35 @@ if DocumentReaderFactory.is_supported("file.xlsx"):
 | title | string | ❌ | 标题页标题 |
 | subtitle | string | ❌ | 标题页副标题 |
 | slides | object[] | ❌ | 幻灯片定义，支持 `title`、`paragraphs`、`bullets`、`table` |
+
+### write_spreadsheet
+
+生成 XLSX / CSV 电子表格，或通过 LibreOffice 转换导出 XLS。
+
+| 参数 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| filename | string | ✅ | 输出路径，后缀必须为 `.xlsx`、`.csv` 或 `.xls` |
+| sheets | object[] | ❌ | 工作表定义，支持 `name`、`headers`、`rows` |
+| headers | string[] | ❌ | 单工作表表头（未提供 `sheets` 时生效） |
+| rows | object[] | ❌ | 单工作表数据行（未提供 `sheets` 时生效） |
+
+### convert_document
+
+通过 LibreOffice 转换文档格式。
+
+| 参数 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| filename | string | ✅ | 源文档路径 |
+| target_format | string | ✅ | 目标扩展名，如 `pdf`、`docx`、`txt`、`html`、`csv` |
+| output_dir | string | ❌ | 输出目录，默认为源文件所在目录 |
+
+### list_supported_formats
+
+返回当前支持读写的全部格式列表（JSON）。
+
+| 参数 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| - | - | - | 无参数 |
 
 ## 依赖
 

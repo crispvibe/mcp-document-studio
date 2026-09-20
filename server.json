@@ -3,7 +3,7 @@
   "name": "io.github.xt765/mcp_documents_reader",
   "title": "MCP Document Reader",
   "description": "An MCP enabled multi-format document reader and writer supporting Office, PDF, text, EPUB, and presentation workflows",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "license": "MIT",
   "authors": [
     {
@@ -28,7 +28,7 @@
     {
       "registryType": "pypi",
       "identifier": "mcp-documents-reader",
-      "version": "1.4.0",
+      "version": "1.5.0",
       "transport": {
         "type": "stdio"
       }

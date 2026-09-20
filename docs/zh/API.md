@@ -90,7 +90,7 @@ reader = ExcelReader()
 content = reader.read("/path/to/spreadsheet.xlsx")
 ```
 
-**支持扩展名：** `.xlsx`, `.xls`
+**支持扩展名：** `.xlsx`, `.xls`, `.xlsm`, `.xlsb`, `.ods`
 
 **特性：**
 - 多工作表支持
@@ -149,10 +149,23 @@ readers_map = DocumentReaderFactory._readers
 | 扩展名 | 读取器类 |
 |--------|----------|
 | `.txt` | TxtReader |
+| `.csv` | CsvReader |
+| `.md`, `.markdown` | MarkdownReader |
+| `.doc` | DocReader |
 | `.docx` | DocxReader |
 | `.pdf` | PdfReader |
+| `.ppt` | PptReader |
+| `.pptx` | PptxReader |
+| `.epub` | EpubReader |
 | `.xlsx` | ExcelReader |
 | `.xls` | ExcelReader |
+| `.xlsm` | ExcelReader |
+| `.xlsb` | ExcelReader |
+| `.ods` | ExcelReader |
+| `.html`, `.htm` | HtmlReader |
+| `.json` | JsonReader |
+| `.rtf` | RtfReader |
+| `.xml`, `.yaml`, `.yml` | TxtReader |
 
 ---
 
@@ -191,3 +204,87 @@ content = read_document(filename="notes.txt")
 - 文件不存在时返回错误信息
 - 不支持的格式返回错误信息
 - 损坏的文件返回错误信息
+
+### extract_document_images
+
+提取 DOCX 文件中的嵌入图片，并返回结构化 JSON 元数据。
+
+**参数：**
+
+| 参数 | 类型 | 必需 | 描述 |
+|------|------|------|------|
+| `filename` | string | 是 | DOCX 文件路径 |
+| `output_dir` | string | 否 | 图片导出目录（缺省时导出到临时目录） |
+
+**返回：** 包含图片元数据与导出路径的 JSON 字符串。
+
+### write_word_document
+
+生成 `.docx` Word 文档，或通过 LibreOffice 转换导出 `.doc`。
+
+**参数：**
+
+| 参数 | 类型 | 必需 | 描述 |
+|------|------|------|------|
+| `filename` | string | 是 | 输出路径，后缀为 `.docx` 或 `.doc` |
+| `title` | string | 否 | 文档标题 |
+| `paragraphs` | string[] | 否 | 按顺序写入的段落 |
+| `tables` | object[] | 否 | 表格定义，支持 `title`、`headers`、`rows` |
+
+**返回：** 描述生成文件路径与格式的 JSON 字符串。
+
+### write_presentation
+
+生成 `.pptx` 演示文稿，或通过 LibreOffice 转换导出 `.ppt`。
+
+**参数：**
+
+| 参数 | 类型 | 必需 | 描述 |
+|------|------|------|------|
+| `filename` | string | 是 | 输出路径，后缀为 `.pptx` 或 `.ppt` |
+| `title` | string | 否 | 标题页标题 |
+| `subtitle` | string | 否 | 标题页副标题 |
+| `slides` | object[] | 否 | 幻灯片定义，支持 `title`、`paragraphs`、`bullets`、`table` |
+
+**返回：** 描述生成文件路径与格式的 JSON 字符串。
+
+### write_spreadsheet
+
+生成 `.xlsx` 多工作表电子表格或 `.csv` 文件，或通过 LibreOffice 转换导出 `.xls`。
+
+**参数：**
+
+| 参数 | 类型 | 必需 | 描述 |
+|------|------|------|------|
+| `filename` | string | 是 | 输出路径，后缀为 `.xlsx`、`.csv` 或 `.xls` |
+| `sheets` | object[] | 否 | 工作表定义，支持 `name`、`headers`、`rows` |
+| `headers` | string[] | 否 | 单工作表表头（未提供 `sheets` 时生效） |
+| `rows` | object[] | 否 | 单工作表数据行（未提供 `sheets` 时生效） |
+
+**返回：** 描述生成文件路径与格式的 JSON 字符串。
+
+**说明：** CSV 输出仅支持单个工作表；数值类型（int/float/bool）会以原生类型写入单元格。
+
+### convert_document
+
+通过 LibreOffice 将文档转换为其他格式。
+
+**参数：**
+
+| 参数 | 类型 | 必需 | 描述 |
+|------|------|------|------|
+| `filename` | string | 是 | 源文档路径 |
+| `target_format` | string | 是 | 目标扩展名，如 `pdf`、`docx`、`txt`、`html`、`csv` |
+| `output_dir` | string | 否 | 输出目录，默认为源文件所在目录 |
+
+**返回：** 描述转换后文件路径与格式的 JSON 字符串。
+
+**说明：** 需要安装 LibreOffice 并确保 `soffice` 或 `libreoffice` 在 `PATH` 中。
+
+### list_supported_formats
+
+列出所有支持读取与写入的文件格式。
+
+**参数：** 无。
+
+**返回：** 包含 `read`（可读取扩展名列表）与 `write`（按文档类型分组的可写扩展名）的 JSON 字符串。

@@ -1,7 +1,7 @@
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
-import zipfile
 
 import pytest
 
@@ -38,7 +38,10 @@ def test_format_docx_content_with_images_without_text() -> None:
 
 
 def test_read_text_file_returns_decode_error_when_all_encodings_fail() -> None:
-    mocked_open = mock.MagicMock(side_effect=[UnicodeDecodeError("utf-8", b"", 0, 1, "boom")] * len(reader_module.TEXT_ENCODINGS))
+    mocked_open = mock.MagicMock(
+        side_effect=[UnicodeDecodeError("utf-8", b"", 0, 1, "boom")]
+        * len(reader_module.TEXT_ENCODINGS)
+    )
 
     with mock.patch("builtins.open", mocked_open):
         result = reader_module._read_text_file(
@@ -65,7 +68,12 @@ def test_normalize_and_extract_markup_helpers() -> None:
     assert reader_module._normalize_text_chunks(["  ", " a ", "b  "], "EMPTY") == "a\nb"
     assert reader_module._normalize_text_chunks(["", "   "], "EMPTY") == "EMPTY"
     assert reader_module._local_name("{urn:test}tag") == "tag"
-    assert reader_module._extract_markup_text(b"<root><item> first text </item><item>second</item></root>") == "first text\nsecond"
+    assert (
+        reader_module._extract_markup_text(
+            b"<root><item> first text </item><item>second</item></root>"
+        )
+        == "first text\nsecond"
+    )
 
 
 @mock.patch("mcp_documents_reader.subprocess.run")
@@ -88,7 +96,11 @@ def test_mdls_and_text_commands(monkeypatch: pytest.MonkeyPatch) -> None:
     assert reader_module._extract_text_with_mdls("file.doc") is None
 
     monkeypatch.setattr(reader_module.sys, "platform", "darwin")
-    monkeypatch.setattr(reader_module.shutil, "which", lambda name: "/usr/bin/mdls" if name == "mdls" else None)
+    monkeypatch.setattr(
+        reader_module.shutil,
+        "which",
+        lambda name: "/usr/bin/mdls" if name == "mdls" else None,
+    )
     monkeypatch.setattr(reader_module, "_run_text_command", lambda command: "mdls text")
     assert reader_module._extract_text_with_mdls("file.doc") == "mdls text"
 
@@ -97,12 +109,18 @@ def test_mdls_and_text_commands(monkeypatch: pytest.MonkeyPatch) -> None:
     assert reader_module._extract_text_with_command("file.ppt", "catppt") is None
 
     monkeypatch.setattr(reader_module.shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(reader_module, "_run_text_command", lambda command: "command text")
+    monkeypatch.setattr(
+        reader_module, "_run_text_command", lambda command: "command text"
+    )
     assert reader_module._extract_text_with_textutil("file.doc") == "command text"
-    assert reader_module._extract_text_with_command("file.ppt", "catppt") == "command text"
+    assert (
+        reader_module._extract_text_with_command("file.ppt", "catppt") == "command text"
+    )
 
 
-def test_extract_text_with_libreoffice(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_extract_text_with_libreoffice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(reader_module.shutil, "which", lambda name: None)
     assert reader_module._extract_text_with_libreoffice("sample.doc") is None
 
@@ -120,7 +138,9 @@ def test_extract_text_with_libreoffice(monkeypatch: pytest.MonkeyPatch, tmp_path
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(reader_module.subprocess, "run", fake_run_success)
-    assert reader_module._extract_text_with_libreoffice("sample.doc") == "converted text"
+    assert (
+        reader_module._extract_text_with_libreoffice("sample.doc") == "converted text"
+    )
 
 
 def test_extract_epub_document_paths_and_fallback(tmp_path: Path) -> None:
@@ -162,21 +182,39 @@ def test_reader_error_branches(tmp_path: Path) -> None:
 
 
 def test_doc_and_ppt_reader_error_branches() -> None:
-    with mock.patch("mcp_documents_reader._extract_text_with_mdls", return_value=None), mock.patch(
-        "mcp_documents_reader._extract_text_with_textutil", return_value=None
-    ), mock.patch("mcp_documents_reader._extract_text_with_command", return_value=None), mock.patch(
-        "mcp_documents_reader._extract_text_with_libreoffice", return_value=None
+    with (
+        mock.patch("mcp_documents_reader._extract_text_with_mdls", return_value=None),
+        mock.patch(
+            "mcp_documents_reader._extract_text_with_textutil", return_value=None
+        ),
+        mock.patch(
+            "mcp_documents_reader._extract_text_with_command", return_value=None
+        ),
+        mock.patch(
+            "mcp_documents_reader._extract_text_with_libreoffice", return_value=None
+        ),
+        mock.patch(
+            "mcp_documents_reader._extract_legacy_binary_text", return_value=None
+        ),
     ):
-        assert "No available extractor succeeded" in reader_module.DocReader().read("legacy.doc")
-        assert "No available extractor succeeded" in reader_module.PptReader().read("slides.ppt")
+        assert "No text could be extracted" in reader_module.DocReader().read(
+            "legacy.doc"
+        )
+        assert "No text could be extracted" in reader_module.PptReader().read(
+            "slides.ppt"
+        )
 
-    with mock.patch("mcp_documents_reader._extract_text_with_mdls", side_effect=RuntimeError("boom")):
+    with mock.patch(
+        "mcp_documents_reader._extract_text_with_mdls", side_effect=RuntimeError("boom")
+    ):
         assert "Error reading DOC: boom" == reader_module.DocReader().read("legacy.doc")
         assert "Error reading PPT: boom" == reader_module.PptReader().read("slides.ppt")
 
 
 def test_extract_document_images_error_and_main(sample_docx_file: Path) -> None:
-    with mock.patch.object(reader_module.DocxReader, "extract_images", side_effect=RuntimeError("boom")):
+    with mock.patch.object(
+        reader_module.DocxReader, "extract_images", side_effect=RuntimeError("boom")
+    ):
         result = reader_module.extract_document_images(str(sample_docx_file))
 
     assert result == "Error extracting document images: boom"

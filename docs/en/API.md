@@ -90,7 +90,7 @@ reader = ExcelReader()
 content = reader.read("/path/to/spreadsheet.xlsx")
 ```
 
-**Supported Extensions:** `.xlsx`, `.xls`
+**Supported Extensions:** `.xlsx`, `.xls`, `.xlsm`, `.xlsb`, `.ods`
 
 **Features:**
 - Multi-sheet support
@@ -149,10 +149,23 @@ readers_map = DocumentReaderFactory._readers
 | Extension | Reader Class |
 |-----------|--------------|
 | `.txt` | TxtReader |
+| `.csv` | CsvReader |
+| `.md`, `.markdown` | MarkdownReader |
+| `.doc` | DocReader |
 | `.docx` | DocxReader |
 | `.pdf` | PdfReader |
+| `.ppt` | PptReader |
+| `.pptx` | PptxReader |
+| `.epub` | EpubReader |
 | `.xlsx` | ExcelReader |
 | `.xls` | ExcelReader |
+| `.xlsm` | ExcelReader |
+| `.xlsb` | ExcelReader |
+| `.ods` | ExcelReader |
+| `.html`, `.htm` | HtmlReader |
+| `.json` | JsonReader |
+| `.rtf` | RtfReader |
+| `.xml`, `.yaml`, `.yml` | TxtReader |
 
 ---
 
@@ -191,3 +204,87 @@ content = read_document(filename="notes.txt")
 - Returns error message if file not found
 - Returns error message for unsupported formats
 - Returns error message for corrupted files
+
+### extract_document_images
+
+Extract embedded images from a DOCX file and return structured JSON metadata.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `filename` | string | Yes | Path to the DOCX file |
+| `output_dir` | string | No | Directory for exported images (defaults to a temp directory) |
+
+**Returns:** JSON string with image metadata and exported file paths.
+
+### write_word_document
+
+Generate a `.docx` Word document, or export `.doc` via LibreOffice conversion.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `filename` | string | Yes | Output path ending with `.docx` or `.doc` |
+| `title` | string | No | Document title |
+| `paragraphs` | string[] | No | Paragraphs written in order |
+| `tables` | object[] | No | Table specs with `title`, `headers`, and `rows` |
+
+**Returns:** JSON string describing the generated file path and format.
+
+### write_presentation
+
+Generate a `.pptx` presentation, or export `.ppt` via LibreOffice conversion.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `filename` | string | Yes | Output path ending with `.pptx` or `.ppt` |
+| `title` | string | No | Title slide title |
+| `subtitle` | string | No | Title slide subtitle |
+| `slides` | object[] | No | Slide specs with `title`, `paragraphs`, `bullets`, `table` |
+
+**Returns:** JSON string describing the generated file path and format.
+
+### write_spreadsheet
+
+Generate a multi-sheet `.xlsx` spreadsheet or `.csv` file, or export `.xls` via LibreOffice conversion.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `filename` | string | Yes | Output path ending with `.xlsx`, `.csv`, or `.xls` |
+| `sheets` | object[] | No | Sheet specs with `name`, `headers`, and `rows` |
+| `headers` | string[] | No | Single-sheet headers (used when `sheets` is empty) |
+| `rows` | object[] | No | Single-sheet data rows (used when `sheets` is empty) |
+
+**Returns:** JSON string describing the generated file path and format.
+
+**Notes:** CSV output supports a single sheet only; numeric values (int/float/bool) are written as native cell types.
+
+### convert_document
+
+Convert a document to another format via LibreOffice.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `filename` | string | Yes | Source document path |
+| `target_format` | string | Yes | Target extension such as `pdf`, `docx`, `txt`, `html`, `csv` |
+| `output_dir` | string | No | Output directory (defaults to the source directory) |
+
+**Returns:** JSON string describing the converted file path and format.
+
+**Notes:** Requires LibreOffice with `soffice` or `libreoffice` in `PATH`.
+
+### list_supported_formats
+
+List all document formats supported for reading and writing.
+
+**Parameters:** None.
+
+**Returns:** JSON string with `read` (readable extensions) and `write` (writable extensions grouped by document type).

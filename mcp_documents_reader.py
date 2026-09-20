@@ -1,6 +1,8 @@
+import csv
+import io
 import json
 import os
-import csv
+import posixpath
 import re
 import shutil
 import subprocess
@@ -8,14 +10,26 @@ import sys
 import tempfile
 import zipfile
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
+from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, cast
+from urllib.parse import unquote
 from xml.etree import ElementTree
 
 from docx import Document as DocxDocument
+from docx.document import Document as DocxDocumentType
+from docx.oxml.ns import qn
+from docx.parts.image import ImagePart
+from docx.table import Table as DocxTable
+from docx.text.paragraph import Paragraph as DocxParagraph
 from mcp.server.fastmcp import FastMCP
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from pypdf import PdfReader as PyPdfReader
 from typing_extensions import override
+
+if TYPE_CHECKING:
+    from pptx.shapes.placeholder import SlidePlaceholder
 
 mcp = FastMCP("Document Reader")
 
@@ -49,7 +63,8 @@ def _format_docx_content_with_images(
         width_px = image.get("width_px")
         height_px = image.get("height_px")
         image_lines.append(
-            f"[{index}] {filename} | {width_px}x{height_px} | path: {saved_path} | uri: {saved_uri}"
+            f"[{index}] {filename} | {width_px}x{height_px}"
+            f" | path: {saved_path} | uri: {saved_uri}"
         )
 
     if text_content:
@@ -57,13 +72,14 @@ def _format_docx_content_with_images(
     return "\n".join(image_lines).strip()
 
 
-def _read_text_file(
-    file_path: str, *, empty_message: str, error_prefix: str
-) -> str:
+def _read_text_file(file_path: str, *, empty_message: str, error_prefix: str) -> str:
     for encoding in TEXT_ENCODINGS:
         try:
             with open(file_path, "r", encoding=encoding, newline="") as file:
                 text = file.read()
+            # a BOM survives plain utf-8 decoding; drop it before returning
+            if text.startswith("\ufeff"):
+                text = text[1:]
             return text if text else empty_message
         except UnicodeDecodeError:
             continue
@@ -141,6 +157,72 @@ def _extract_text_with_command(file_path: str, command_name: str) -> str | None:
     return _run_text_command([executable, file_path])
 
 
+def _common_text_run_chars() -> frozenset[str]:
+    ascii_set = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    punct = " \t'\".,;:!?()[]{}<>+-*/=@#$%^&_|~\\`\n"
+    cjk_punct = "，。；：！？（）【】《》、“”‘’—…·￥"
+    return frozenset(ascii_set + punct + cjk_punct)
+
+
+_COMMON_TEXT_CHARS = _common_text_run_chars()
+
+
+def _is_common_text_char(char: str) -> bool:
+    if char in _COMMON_TEXT_CHARS:
+        return True
+    code = ord(char)
+    # CJK Unified Ideographs, CJK Symbols, Hiragana/Katakana, Hangul
+    return (
+        0x3000 <= code <= 0x9FFF
+        or 0xAC00 <= code <= 0xD7AF
+        or 0xFF00 <= code <= 0xFFEF
+        or 0x2000 <= code <= 0x206F
+    )
+
+
+def _printable_text_runs(text: str, min_length: int = 4) -> list[str]:
+    runs: list[str] = []
+    for chunk in re.split(r"[\x00-\x08\x0b\x0c\x0e-\x1f]+", text):
+        cleaned = re.sub(r"[^\S\n]+", " ", chunk).strip()
+        if len(cleaned) < min_length:
+            continue
+        common = sum(1 for char in cleaned if _is_common_text_char(char))
+        if common / len(cleaned) >= 0.7:
+            runs.append(cleaned)
+    return runs
+
+
+def _extract_legacy_binary_text(file_path: str) -> str | None:
+    """Best-effort text extraction from legacy OLE binary formats (.doc/.ppt).
+
+    Legacy Office binaries store text as UTF-16LE or single-byte runs inside
+    an OLE compound file. Pulling printable runs is a heuristic fallback used
+    only when no dedicated extractor (antiword, catppt, LibreOffice) exists.
+    """
+    try:
+        data = Path(file_path).read_bytes()
+    except Exception:
+        return None
+    if not data:
+        return None
+
+    runs: list[str] = []
+    seen: set[str] = set()
+    for decoded in (
+        data.decode("utf-16-le", errors="ignore"),
+        data.decode("latin-1", errors="ignore"),
+    ):
+        for run in _printable_text_runs(decoded):
+            key = run.lower()
+            if run not in runs and key not in seen:
+                seen.add(key)
+                runs.append(run)
+
+    if not runs:
+        return None
+    return "\n".join(runs[:500])
+
+
 def _extract_text_with_libreoffice(file_path: str) -> str | None:
     executable = shutil.which("soffice") or shutil.which("libreoffice")
     if executable is None:
@@ -201,7 +283,8 @@ def _extract_epub_document_paths(archive: zipfile.ZipFile) -> list[str]:
         href = item.attrib.get("href")
         if not item_id or not href:
             continue
-        manifest[item_id] = str((opf_parent / href).as_posix())
+        href_path = unquote(href.split("#", 1)[0])
+        manifest[item_id] = posixpath.normpath(str(opf_parent / href_path))
 
     document_paths: list[str] = []
     for itemref in opf_root.findall(".//opf:spine/opf:itemref", opf_namespace):
@@ -299,7 +382,7 @@ def _build_word_document(
     title: str | None,
     paragraphs: list[str] | None,
     tables: list[dict[str, object]] | None,
-) -> DocxDocument:
+) -> DocxDocumentType:
     document = DocxDocument()
 
     if title and title.strip():
@@ -347,7 +430,8 @@ def _load_presentation_dependencies():
         from pptx.util import Inches
     except ImportError as exc:
         raise RuntimeError(
-            "python-pptx is required for presentation generation. Install project dependencies first."
+            "python-pptx is required for presentation generation. "
+            "Install project dependencies first."
         ) from exc
 
     return Presentation, Inches
@@ -363,10 +447,13 @@ def _build_presentation(
 
     if title or subtitle:
         title_slide = presentation.slides.add_slide(presentation.slide_layouts[0])
-        if title_slide.shapes.title is not None:
-            title_slide.shapes.title.text = title or ""
+        title_shape = title_slide.shapes.title
+        if title_shape is not None and title_shape.has_text_frame:
+            title_shape.text_frame.text = title or ""
         if len(title_slide.placeholders) > 1:
-            title_slide.placeholders[1].text = subtitle or ""
+            subtitle_shape = cast("SlidePlaceholder", title_slide.placeholders[1])
+            if subtitle_shape.has_text_frame:
+                subtitle_shape.text_frame.text = subtitle or ""
 
     for slide_spec in slides or []:
         slide = presentation.slides.add_slide(presentation.slide_layouts[6])
@@ -448,6 +535,72 @@ def _build_presentation(
     return presentation
 
 
+_INVALID_SHEET_NAME_CHARS = re.compile(r"[\\/*?:\[\]]")
+
+
+def _sanitize_sheet_name(name: object, default: str) -> str:
+    cleaned = _INVALID_SHEET_NAME_CHARS.sub("", _stringify_value(name)).strip()
+    return cleaned[:31] or default
+
+
+def _coerce_cell_value(value: object) -> str | int | float | bool | None:
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return _stringify_value(value)
+
+
+def _coerce_sheet_rows(values: object) -> list[list[str | int | float | bool | None]]:
+    if not isinstance(values, list):
+        return []
+    return [
+        [_coerce_cell_value(cell) for cell in row]
+        for row in values
+        if isinstance(row, list)
+    ]
+
+
+def _build_workbook(sheets: list[dict[str, object]] | None) -> Workbook:
+    workbook = Workbook()
+    first_sheet = True
+
+    for index, sheet_spec in enumerate(sheets or [], start=1):
+        if not isinstance(sheet_spec, dict):
+            continue
+        name = _sanitize_sheet_name(sheet_spec.get("name"), f"Sheet{index}")
+        if first_sheet:
+            worksheet = workbook.active
+            if worksheet is None:
+                worksheet = workbook.create_sheet()
+        else:
+            worksheet = workbook.create_sheet()
+        worksheet.title = name
+
+        headers = _coerce_text_list(sheet_spec.get("headers"))
+        if headers:
+            worksheet.append(headers)
+        for row in _coerce_sheet_rows(sheet_spec.get("rows")):
+            worksheet.append(row)
+        first_sheet = False
+
+    return workbook
+
+
+def _write_csv_file(
+    target_path: Path,
+    headers: list[str],
+    rows: list[list[str | int | float | bool | None]],
+) -> None:
+    # utf-8-sig so spreadsheet apps detect UTF-8 correctly
+    with open(target_path, "w", encoding="utf-8-sig", newline="") as file:
+        writer = csv.writer(file)
+        if headers:
+            writer.writerow(headers)
+        for row in rows:
+            writer.writerow(["" if cell is None else cell for cell in row])
+
+
 def _serialize_generated_file(
     file_path: Path, generated_format: str, source_format: str | None = None
 ) -> str:
@@ -470,6 +623,31 @@ class DocumentReader(ABC):
         pass
 
 
+def _iter_docx_block_items(
+    document: DocxDocumentType,
+) -> Iterator[DocxParagraph | DocxTable]:
+    """Yield paragraphs and tables in document order."""
+    body = document.element.body
+    for child in body.iterchildren():
+        if child.tag == qn("w:p"):
+            yield DocxParagraph(child, document)
+        elif child.tag == qn("w:tbl"):
+            yield DocxTable(child, document)
+
+
+def _docx_table_rows_text(table: DocxTable) -> list[str]:
+    rows_text: list[str] = []
+    for row in table.rows:
+        row_text = []
+        for cell in row.cells:
+            cell_text = " ".join(p.text for p in cell.paragraphs).strip()
+            if cell_text:
+                row_text.append(cell_text)
+        if row_text:
+            rows_text.append("\t".join(row_text))
+    return rows_text
+
+
 class DocxReader(DocumentReader):
     """DOCX document reader implementation"""
 
@@ -480,19 +658,12 @@ class DocxReader(DocumentReader):
             doc = DocxDocument(file_path)
             text = []
 
-            for paragraph in doc.paragraphs:
-                if paragraph.text:
-                    text.append(paragraph.text)
-
-            for table in doc.tables:
-                for row in table.rows:
-                    row_text = []
-                    for cell in row.cells:
-                        cell_text = " ".join([p.text for p in cell.paragraphs]).strip()
-                        if cell_text:
-                            row_text.append(cell_text)
-                    if row_text:
-                        text.append("\t".join(row_text))
+            for block in _iter_docx_block_items(doc):
+                if isinstance(block, DocxParagraph):
+                    if block.text:
+                        text.append(block.text)
+                else:
+                    text.extend(_docx_table_rows_text(block))
 
             extracted_text = "\n".join(text)
             return extracted_text if extracted_text else "No text found in the DOCX."
@@ -517,10 +688,12 @@ class DocxReader(DocumentReader):
                 continue
 
             rel = doc.part.rels[rel_id]
-            if "image" not in rel.reltype:
+            if "image" not in rel.reltype or rel.is_external:
                 continue
 
             image_part = rel.target_part
+            if not isinstance(image_part, ImagePart):
+                continue
             image = image_part.image
             docpr = getattr(shape._inline, "docPr", None)
             extracted_images.append(
@@ -552,7 +725,7 @@ class DocxReader(DocumentReader):
 
         images: list[dict[str, object]] = []
         for position, image_info in enumerate(extracted_images, start=1):
-            blob = image_info.pop("blob")
+            blob = cast(bytes, image_info.pop("blob"))
             saved_path: str | None = None
             saved_uri: str | None = None
             saved_filename: str | None = None
@@ -594,6 +767,11 @@ class PdfReader(DocumentReader):
         try:
             with open(file_path, "rb") as file:
                 pdf_reader = PyPdfReader(file)
+                if pdf_reader.is_encrypted:
+                    try:
+                        pdf_reader.decrypt("")
+                    except Exception:
+                        pass
                 text = []
 
                 for page in pdf_reader.pages:
@@ -602,7 +780,12 @@ class PdfReader(DocumentReader):
                         text.append(page_text.strip())
 
                 extracted_text = "\n\n".join(text)
-                return extracted_text if extracted_text else "No text found in the PDF."
+                if extracted_text:
+                    return extracted_text
+                return (
+                    "No text found in the PDF. "
+                    "Scanned or image-only PDFs require OCR, which is not bundled."
+                )
         except Exception as e:
             return f"Error reading PDF: {str(e)}"
 
@@ -625,15 +808,9 @@ class CsvReader(DocumentReader):
     def read(self, file_path: str) -> str:
         for encoding in TEXT_ENCODINGS:
             try:
-                rows: list[str] = []
                 with open(file_path, "r", encoding=encoding, newline="") as file:
-                    reader = csv.reader(file)
-                    for row in reader:
-                        if not row:
-                            continue
-                        row_text = [cell.strip() for cell in row]
-                        if any(row_text):
-                            rows.append("\t".join(row_text))
+                    content = file.read()
+                rows = _csv_text_to_rows(content)
                 return _normalize_text_chunks(rows, "No text found in the CSV file.")
             except UnicodeDecodeError:
                 continue
@@ -662,12 +839,13 @@ class DocReader(DocumentReader):
                 or _extract_text_with_textutil(file_path)
                 or _extract_text_with_command(file_path, "antiword")
                 or _extract_text_with_libreoffice(file_path)
+                or _extract_legacy_binary_text(file_path)
             )
             if extracted:
                 return extracted
             return (
-                "Error reading DOC: No available extractor succeeded. "
-                "Try installing antiword or LibreOffice on this machine."
+                "Error reading DOC: No text could be extracted. "
+                "Try installing antiword or LibreOffice for better results."
             )
         except Exception as exc:
             return f"Error reading DOC: {str(exc)}"
@@ -681,15 +859,69 @@ class PptReader(DocumentReader):
                 _extract_text_with_mdls(file_path)
                 or _extract_text_with_command(file_path, "catppt")
                 or _extract_text_with_libreoffice(file_path)
+                or _extract_legacy_binary_text(file_path)
             )
             if extracted:
                 return extracted
             return (
-                "Error reading PPT: No available extractor succeeded. "
-                "Try installing catdoc/catppt or LibreOffice on this machine."
+                "Error reading PPT: No text could be extracted. "
+                "Try installing catdoc/catppt or LibreOffice for better results."
             )
         except Exception as exc:
             return f"Error reading PPT: {str(exc)}"
+
+
+def _get_pptx_slide_paths(archive: zipfile.ZipFile) -> list[str]:
+    """Return slide part paths in presentation order.
+
+    Resolves the p:sldIdLst ordering from ppt/presentation.xml through
+    presentation.xml.rels. Falls back to numeric filename ordering when the
+    manifest is missing or incomplete.
+    """
+    names = set(archive.namelist())
+    try:
+        presentation_root = ElementTree.fromstring(archive.read("ppt/presentation.xml"))
+        rels_root = ElementTree.fromstring(
+            archive.read("ppt/_rels/presentation.xml.rels")
+        )
+    except KeyError:
+        presentation_root = None
+        rels_root = None
+
+    if presentation_root is not None and rels_root is not None:
+        rel_targets: dict[str, str] = {}
+        for rel in rels_root:
+            rel_id = rel.attrib.get("Id")
+            target = rel.attrib.get("Target")
+            if not rel_id or not target:
+                continue
+            if target.startswith("/"):
+                rel_targets[rel_id] = target.lstrip("/")
+            else:
+                rel_targets[rel_id] = posixpath.normpath(f"ppt/{target}")
+
+        rel_id_key = (
+            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+        )
+        ordered: list[str] = []
+        for slide_id in presentation_root.iter():
+            if _local_name(slide_id.tag) != "sldId":
+                continue
+            rel_id = slide_id.attrib.get(rel_id_key)
+            slide_path = rel_targets.get(rel_id) if rel_id else None
+            if slide_path and slide_path in names:
+                ordered.append(slide_path)
+        if ordered:
+            return ordered
+
+    numbered = [
+        (match, name)
+        for name in names
+        if (match := PPTX_SLIDE_PATTERN.match(name)) is not None
+    ]
+    return [
+        name for match, name in sorted(numbered, key=lambda item: int(item[0].group(1)))
+    ]
 
 
 class PptxReader(DocumentReader):
@@ -697,15 +929,7 @@ class PptxReader(DocumentReader):
     def read(self, file_path: str) -> str:
         try:
             with zipfile.ZipFile(file_path) as archive:
-                slide_names = [
-                    name
-                    for name in archive.namelist()
-                    if PPTX_SLIDE_PATTERN.match(name) is not None
-                ]
-                ordered_slide_names = sorted(
-                    slide_names,
-                    key=lambda name: int(PPTX_SLIDE_PATTERN.match(name).group(1)),
-                )
+                ordered_slide_names = _get_pptx_slide_paths(archive)
                 text: list[str] = []
 
                 for index, slide_name in enumerate(ordered_slide_names, start=1):
@@ -742,12 +966,78 @@ class EpubReader(DocumentReader):
             return f"Error reading EPUB: {str(exc)}"
 
 
+def _csv_text_to_rows(text: str) -> list[str]:
+    rows: list[str] = []
+    for row in csv.reader(io.StringIO(text.lstrip("\ufeff"))):
+        row_text = [cell.strip() for cell in row]
+        if any(row_text):
+            rows.append("\t".join(row_text))
+    return rows
+
+
 class ExcelReader(DocumentReader):
     """Excel document reader implementation"""
+
+    _CALAMINE_SUFFIXES = {".xls", ".xlsb", ".ods"}
 
     @override
     def read(self, file_path: str) -> str:
         """Read and extract text from Excel file"""
+        if Path(file_path).suffix.lower() in self._CALAMINE_SUFFIXES:
+            return self._read_legacy_spreadsheet(file_path)
+        return self._read_xlsx(file_path)
+
+    def _read_legacy_spreadsheet(self, file_path: str) -> str:
+        try:
+            extracted = self._read_with_calamine(file_path)
+            if extracted is not None:
+                return extracted
+
+            csv_text = _extract_text_with_command(file_path, "xls2csv")
+            if csv_text:
+                normalized = _normalize_text_chunks(_csv_text_to_rows(csv_text), "")
+                if normalized:
+                    return normalized
+
+            converted = self._convert_xls_to_xlsx(file_path)
+            if converted is not None:
+                return converted
+
+            binary_text = _extract_legacy_binary_text(file_path)
+            if binary_text:
+                return binary_text
+            return (
+                "Error reading Excel: could not extract content. "
+                "Install LibreOffice or xls2csv for better results."
+            )
+        except Exception as exc:
+            return f"Error reading Excel: {str(exc)}"
+
+    def _read_with_calamine(self, file_path: str) -> str | None:
+        try:
+            from python_calamine import CalamineWorkbook
+        except ImportError:
+            return None
+
+        try:
+            workbook = CalamineWorkbook.from_path(file_path)
+        except Exception:
+            return None
+
+        text: list[str] = []
+        for sheet_name in workbook.sheet_names:
+            sheet = workbook.get_sheet_by_name(sheet_name)
+            text.append(f"=== Sheet: {sheet_name} ===")
+            for row in sheet.to_python():
+                row_text = [str(cell) if cell is not None else "" for cell in row]
+                if any(cell.strip() for cell in row_text):
+                    text.append("\t".join(row_text))
+            text.append("")
+
+        extracted = "\n".join(text)
+        return extracted or None
+
+    def _read_xlsx(self, file_path: str) -> str:
         try:
             wb = load_workbook(file_path, read_only=True)
             text = []
@@ -771,6 +1061,286 @@ class ExcelReader(DocumentReader):
         except Exception as e:
             return f"Error reading Excel: {str(e)}"
 
+    def _convert_xls_to_xlsx(self, file_path: str) -> str | None:
+        with tempfile.TemporaryDirectory(prefix="mcp-document-reader-xls-") as temp_dir:
+            target_path = Path(temp_dir) / f"{Path(file_path).stem}.xlsx"
+            converted_path = _convert_with_libreoffice(
+                Path(file_path), target_path, "Calc MS Excel 2007 XML"
+            )
+            if converted_path is None:
+                return None
+            result = self._read_xlsx(str(converted_path))
+            if result.startswith("Error reading Excel:"):
+                return None
+            return result
+
+
+class _HtmlTextExtractor(HTMLParser):
+    """Collect visible text while skipping script/style content."""
+
+    _SKIP_TAGS = {"script", "style", "noscript", "template", "head"}
+    _BLOCK_TAGS = {
+        "address",
+        "article",
+        "aside",
+        "blockquote",
+        "br",
+        "dd",
+        "details",
+        "div",
+        "dl",
+        "dt",
+        "figcaption",
+        "figure",
+        "footer",
+        "form",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "hr",
+        "li",
+        "main",
+        "nav",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "summary",
+        "table",
+        "td",
+        "th",
+        "tr",
+        "ul",
+    }
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._chunks: list[str] = []
+        self._skip_depth = 0
+
+    @override
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._SKIP_TAGS:
+            self._skip_depth += 1
+        elif tag in self._BLOCK_TAGS and self._skip_depth == 0:
+            self._chunks.append("\n")
+
+    @override
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._SKIP_TAGS and self._skip_depth > 0:
+            self._skip_depth -= 1
+        elif tag in self._BLOCK_TAGS and self._skip_depth == 0:
+            self._chunks.append("\n")
+
+    @override
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth == 0:
+            self._chunks.append(data)
+
+    def text(self) -> str:
+        return "".join(self._chunks)
+
+
+class HtmlReader(DocumentReader):
+    """HTML document reader implementation"""
+
+    @override
+    def read(self, file_path: str) -> str:
+        for encoding in TEXT_ENCODINGS:
+            try:
+                with open(file_path, "r", encoding=encoding) as file:
+                    markup = file.read()
+            except UnicodeDecodeError:
+                continue
+            except Exception as exc:
+                return f"Error reading HTML: {str(exc)}"
+
+            extractor = _HtmlTextExtractor()
+            try:
+                extractor.feed(markup)
+            except Exception:
+                pass
+            return _normalize_text_chunks(
+                extractor.text().splitlines(), "No text found in the HTML file."
+            )
+
+        return "Error reading HTML: Could not decode file with any supported encoding."
+
+
+class JsonReader(DocumentReader):
+    """JSON document reader implementation"""
+
+    @override
+    def read(self, file_path: str) -> str:
+        content = _read_text_file(
+            file_path,
+            empty_message="No text found in the JSON file.",
+            error_prefix="Error reading JSON",
+        )
+        if content.startswith("Error reading JSON") or not content.strip():
+            return content
+
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            return content
+        return json.dumps(parsed, ensure_ascii=False, indent=2)
+
+
+_RTF_SKIP_DESTINATIONS = {
+    "fonttbl",
+    "colortbl",
+    "stylesheet",
+    "info",
+    "pict",
+    "object",
+    "header",
+    "footer",
+    "footnote",
+    "annotation",
+    "xmlnstbl",
+    "listtable",
+    "listoverridetable",
+    "revtbl",
+    "rsidtbl",
+    "generator",
+    "datastore",
+    "themedata",
+    "colorschememapping",
+    "latentstyles",
+    "filetbl",
+}
+
+
+def _rtf_to_text(markup: str) -> str:
+    """Convert RTF markup to plain text (covers common RTF documents)."""
+    chunks: list[str] = []
+    stack: list[bool] = []  # per open group: is it an ignorable destination
+    skipped_groups = 0
+    index = 0
+    length = len(markup)
+    uc_skip = 1  # number of fallback chars to skip after \u control words
+    pending_uc_skip = 0
+
+    def _skip_active() -> bool:
+        return skipped_groups > 0
+
+    def _mark_current_group_skipped() -> None:
+        nonlocal skipped_groups
+        if stack and not stack[-1]:
+            stack[-1] = True
+            skipped_groups += 1
+
+    while index < length:
+        char = markup[index]
+        if char == "{":
+            stack.append(False)
+            index += 1
+            continue
+        if char == "}":
+            if stack and stack.pop():
+                skipped_groups -= 1
+            index += 1
+            continue
+        if char != "\\":
+            if pending_uc_skip > 0:
+                pending_uc_skip -= 1
+            elif not _skip_active():
+                chunks.append(char)
+            index += 1
+            continue
+
+        # control symbol or control word
+        index += 1
+        if index >= length:
+            break
+        next_char = markup[index]
+        if next_char in "{}\\":
+            if not _skip_active():
+                chunks.append(next_char)
+            index += 1
+            continue
+        if next_char == "~":
+            if not _skip_active():
+                chunks.append(" ")
+            index += 1
+            continue
+        if next_char == "*":
+            # ignorable destination — mark current group as skipped
+            _mark_current_group_skipped()
+            index += 1
+            continue
+        if next_char == "'" and index + 2 < length:
+            hex_digits = markup[index + 1 : index + 3]
+            if not _skip_active():
+                try:
+                    chunks.append(bytes([int(hex_digits, 16)]).decode("cp1252"))
+                except (ValueError, UnicodeDecodeError):
+                    pass
+            index += 3
+            continue
+
+        match = re.match(r"([a-zA-Z]+)(-?\d+)? ?", markup[index:])
+        if match is None:
+            index += 1
+            continue
+        word, argument = match.group(1), match.group(2)
+        index += match.end()
+
+        if word in _RTF_SKIP_DESTINATIONS:
+            _mark_current_group_skipped()
+            continue
+        if word == "uc" and argument is not None:
+            uc_skip = max(0, int(argument))
+        if _skip_active():
+            continue
+        if word == "u" and argument is not None:
+            code = int(argument)
+            if code < 0:
+                code += 65536
+            try:
+                chunks.append(chr(code))
+            except ValueError:
+                pass
+            pending_uc_skip = uc_skip
+        elif word in {"par", "line", "row", "page", "sect"}:
+            chunks.append("\n")
+        elif word == "tab":
+            chunks.append("\t")
+        elif word == "emdash":
+            chunks.append("\u2014")
+        elif word == "endash":
+            chunks.append("\u2013")
+        elif word in {"lquote", "rquote"}:
+            chunks.append("'")
+        elif word in {"ldblquote", "rdblquote"}:
+            chunks.append('"')
+        elif word == "bullet":
+            chunks.append("\u2022")
+
+    return "".join(chunks)
+
+
+class RtfReader(DocumentReader):
+    """RTF document reader implementation"""
+
+    @override
+    def read(self, file_path: str) -> str:
+        content = _read_text_file(
+            file_path,
+            empty_message="No text found in the RTF file.",
+            error_prefix="Error reading RTF",
+        )
+        if content.startswith("Error reading RTF") or not content.strip():
+            return content
+        return _normalize_text_chunks(
+            _rtf_to_text(content).splitlines(), "No text found in the RTF file."
+        )
+
 
 class DocumentReaderFactory:
     """Factory for creating document readers based on file extension"""
@@ -788,6 +1358,16 @@ class DocumentReaderFactory:
         ".epub": EpubReader,
         ".xlsx": ExcelReader,
         ".xls": ExcelReader,
+        ".xlsb": ExcelReader,
+        ".xlsm": ExcelReader,
+        ".ods": ExcelReader,
+        ".html": HtmlReader,
+        ".htm": HtmlReader,
+        ".json": JsonReader,
+        ".xml": TxtReader,
+        ".yaml": TxtReader,
+        ".yml": TxtReader,
+        ".rtf": RtfReader,
     }
 
     @classmethod
@@ -804,6 +1384,18 @@ class DocumentReaderFactory:
         _, ext = os.path.splitext(file_path.lower())
         return ext in cls._readers
 
+    @classmethod
+    def supported_extensions(cls) -> list[str]:
+        """List all supported file extensions for reading."""
+        return sorted(cls._readers)
+
+
+WRITE_FORMATS: dict[str, list[str]] = {
+    "word": [".docx", ".doc"],
+    "presentation": [".pptx", ".ppt"],
+    "spreadsheet": [".xlsx", ".csv", ".xls"],
+}
+
 
 @mcp.tool()
 def read_document(filename: str) -> str:
@@ -816,7 +1408,7 @@ def read_document(filename: str) -> str:
         (supports absolute or relative paths)
     :return: Extracted text from the document
     """
-    file_path = Path(filename)
+    file_path = Path(filename).expanduser()
 
     if not file_path.exists():
         return f"Error: File '{filename}' not found."
@@ -827,7 +1419,9 @@ def read_document(filename: str) -> str:
     try:
         reader = DocumentReaderFactory.get_reader(str(file_path))
         content = reader.read(str(file_path))
-        if isinstance(reader, DocxReader) and not content.startswith("Error reading DOCX:"):
+        if isinstance(reader, DocxReader) and not content.startswith(
+            "Error reading DOCX:"
+        ):
             image_payload = reader.extract_images(str(file_path))
             return _format_docx_content_with_images(content, image_payload)
         return content
@@ -844,7 +1438,7 @@ def extract_document_images(filename: str, output_dir: str | None = None) -> str
     :param output_dir: Optional directory to save extracted images
     :return: JSON payload containing extracted image metadata and saved file paths
     """
-    file_path = Path(filename)
+    file_path = Path(filename).expanduser()
 
     if not file_path.exists():
         return f"Error: File '{filename}' not found."
@@ -888,7 +1482,9 @@ def write_word_document(
             document.save(str(target_path))
             return _serialize_generated_file(target_path, "docx")
 
-        with tempfile.TemporaryDirectory(prefix="mcp-document-writer-word-") as temp_dir:
+        with tempfile.TemporaryDirectory(
+            prefix="mcp-document-writer-word-"
+        ) as temp_dir:
             temp_docx_path = Path(temp_dir) / f"{target_path.stem}.docx"
             document.save(str(temp_docx_path))
             converted_path = _convert_with_libreoffice(
@@ -915,12 +1511,12 @@ def write_presentation(
     slides: list[dict[str, object]] | None = None,
 ) -> str:
     """
-    Generates a PowerPoint presentation in PPTX format, or PPT via LibreOffice conversion.
+    Generates a PowerPoint presentation in PPTX format, or PPT via conversion.
 
     :param filename: Target output path ending with .pptx or .ppt
     :param title: Optional title slide title
     :param subtitle: Optional title slide subtitle
-    :param slides: Optional slide definitions containing title, paragraphs, bullets, and table
+    :param slides: Optional slide definitions (title, paragraphs, bullets, table)
     :return: JSON payload describing the generated file path and format
     """
     target_path = Path(filename).expanduser()
@@ -952,6 +1548,130 @@ def write_presentation(
         return _serialize_generated_file(converted_path, "ppt", source_format="pptx")
     except Exception as exc:
         return f"Error writing presentation: {str(exc)}"
+
+
+@mcp.tool()
+def write_spreadsheet(
+    filename: str,
+    sheets: list[dict[str, object]] | None = None,
+    headers: list[str] | None = None,
+    rows: list[list[object]] | None = None,
+) -> str:
+    """
+    Generates a spreadsheet in XLSX or CSV format, or XLS via LibreOffice conversion.
+
+    :param filename: Target output path ending with .xlsx, .csv, or .xls
+    :param sheets: Optional sheet definitions with name, headers, and rows
+    :param headers: Optional single-sheet headers (used when sheets is empty)
+    :param rows: Optional single-sheet rows (used when sheets is empty)
+    :return: JSON payload describing the generated file path and format
+    """
+    target_path = Path(filename).expanduser()
+    target_suffix = target_path.suffix.lower()
+    if target_suffix not in {".xlsx", ".csv", ".xls"}:
+        return (
+            "Error: Spreadsheet generation supports .xlsx, .csv and .xls output only."
+        )
+
+    sheet_specs: list[dict[str, object]]
+    if sheets:
+        sheet_specs = [spec for spec in sheets if isinstance(spec, dict)]
+    else:
+        sheet_specs = [{"name": "Sheet1", "headers": headers, "rows": rows}]
+
+    if target_suffix == ".csv" and len(sheet_specs) > 1:
+        return "Error: CSV output supports a single sheet only."
+
+    try:
+        _ensure_parent_directory(target_path)
+        if target_suffix == ".csv":
+            sheet = sheet_specs[0]
+            _write_csv_file(
+                target_path,
+                _coerce_text_list(sheet.get("headers")),
+                _coerce_sheet_rows(sheet.get("rows")),
+            )
+            return _serialize_generated_file(target_path, "csv")
+
+        workbook = _build_workbook(sheet_specs)
+        if target_suffix == ".xlsx":
+            workbook.save(str(target_path))
+            return _serialize_generated_file(target_path, "xlsx")
+
+        with tempfile.TemporaryDirectory(prefix="mcp-document-writer-xls-") as temp_dir:
+            temp_xlsx_path = Path(temp_dir) / f"{target_path.stem}.xlsx"
+            workbook.save(str(temp_xlsx_path))
+            converted_path = _convert_with_libreoffice(
+                temp_xlsx_path,
+                target_path,
+                "MS Excel 97",
+            )
+
+        if converted_path is None:
+            return (
+                "Error writing XLS: LibreOffice conversion is unavailable. "
+                "Install LibreOffice and ensure soffice/libreoffice is in PATH."
+            )
+        return _serialize_generated_file(converted_path, "xls", source_format="xlsx")
+    except Exception as exc:
+        return f"Error writing spreadsheet: {str(exc)}"
+
+
+@mcp.tool()
+def convert_document(
+    filename: str,
+    target_format: str,
+    output_dir: str | None = None,
+) -> str:
+    """
+    Converts a document to another format via LibreOffice.
+
+    :param filename: Source document path
+    :param target_format: Target extension such as pdf, docx, txt, html, csv
+    :param output_dir: Optional output directory (defaults to source directory)
+    :return: JSON payload describing the converted file path and format
+    """
+    source_path = Path(filename).expanduser()
+    if not source_path.exists():
+        return f"Error: File '{filename}' not found."
+
+    normalized_format = target_format.strip().lower().lstrip(".")
+    if not re.fullmatch(r"[a-z0-9]+", normalized_format):
+        return f"Error: Invalid target format '{target_format}'."
+
+    source_format = source_path.suffix.lower().lstrip(".")
+    if normalized_format == source_format:
+        return f"Error: Source file is already in '{source_format}' format."
+
+    if output_dir:
+        target_dir = Path(output_dir).expanduser()
+    else:
+        target_dir = source_path.parent
+    target_path = target_dir / f"{source_path.stem}.{normalized_format}"
+
+    converted_path = _convert_with_libreoffice(source_path, target_path)
+    if converted_path is None:
+        return (
+            "Error converting document: LibreOffice conversion is unavailable. "
+            "Install LibreOffice and ensure soffice/libreoffice is in PATH."
+        )
+    return _serialize_generated_file(
+        converted_path, normalized_format, source_format=source_format
+    )
+
+
+@mcp.tool()
+def list_supported_formats() -> str:
+    """
+    Lists all document formats supported for reading and writing.
+
+    :return: JSON payload with readable and writable file extensions
+    """
+    payload = {
+        "read": DocumentReaderFactory.supported_extensions(),
+        "write": WRITE_FORMATS,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def main():

@@ -16,10 +16,13 @@ from mcp_documents_reader import (
     DocxReader,
     EpubReader,
     ExcelReader,
+    HtmlReader,
+    JsonReader,
     MarkdownReader,
     PdfReader,
     PptReader,
     PptxReader,
+    RtfReader,
     TxtReader,
 )
 
@@ -49,6 +52,16 @@ class TestDocumentReaderFactory:
             ("data.XLSX", ExcelReader),
             ("data.xls", ExcelReader),
             ("data.XLS", ExcelReader),
+            ("page.html", HtmlReader),
+            ("page.htm", HtmlReader),
+            ("data.json", JsonReader),
+            ("config.xml", TxtReader),
+            ("config.yaml", TxtReader),
+            ("config.yml", TxtReader),
+            ("doc.rtf", RtfReader),
+            ("data.xlsb", ExcelReader),
+            ("data.xlsm", ExcelReader),
+            ("data.ods", ExcelReader),
         ],
     )
     def test_get_reader_supported_types(
@@ -73,12 +86,9 @@ class TestDocumentReaderFactory:
     @pytest.mark.parametrize(
         "file_path",
         [
-            "test.json",
-            "test.xml",
-            "test.html",
-            "test.rtf",
             "test.odt",
-            "test.ods",
+            "test.odp",
+            "test.bmp",
             "test",
             "test.",
         ],
@@ -129,6 +139,16 @@ class TestDocumentReaderFactory:
             "test.XLSX",
             "test.xls",
             "test.XLS",
+            "test.html",
+            "test.htm",
+            "test.json",
+            "test.xml",
+            "test.yaml",
+            "test.yml",
+            "test.rtf",
+            "test.xlsb",
+            "test.xlsm",
+            "test.ods",
         ],
     )
     def test_is_supported_returns_true(self, file_path: str) -> None:
@@ -142,10 +162,9 @@ class TestDocumentReaderFactory:
     @pytest.mark.parametrize(
         "file_path",
         [
-            "test.json",
-            "test.xml",
-            "test.html",
             "test.unknown",
+            "test.odt",
+            "test.bmp",
             "test",
             "test.",
             "",
@@ -200,6 +219,16 @@ class TestDocumentReaderFactory:
         assert ".epub" in readers
         assert ".xlsx" in readers
         assert ".xls" in readers
+        assert ".html" in readers
+        assert ".htm" in readers
+        assert ".json" in readers
+        assert ".xml" in readers
+        assert ".yaml" in readers
+        assert ".yml" in readers
+        assert ".rtf" in readers
+        assert ".xlsb" in readers
+        assert ".xlsm" in readers
+        assert ".ods" in readers
 
         assert readers[".txt"] == TxtReader
         assert readers[".csv"] == CsvReader
@@ -213,3 +242,20 @@ class TestDocumentReaderFactory:
         assert readers[".epub"] == EpubReader
         assert readers[".xlsx"] == ExcelReader
         assert readers[".xls"] == ExcelReader
+        assert readers[".html"] == HtmlReader
+        assert readers[".htm"] == HtmlReader
+        assert readers[".json"] == JsonReader
+        assert readers[".xml"] == TxtReader
+        assert readers[".yaml"] == TxtReader
+        assert readers[".yml"] == TxtReader
+        assert readers[".rtf"] == RtfReader
+        assert readers[".xlsb"] == ExcelReader
+        assert readers[".xlsm"] == ExcelReader
+        assert readers[".ods"] == ExcelReader
+
+    def test_supported_extensions_sorted_list(self) -> None:
+        """测试 supported_extensions 返回排序后的扩展名列表。"""
+        extensions = DocumentReaderFactory.supported_extensions()
+        assert extensions == sorted(extensions)
+        assert ".docx" in extensions
+        assert ".json" in extensions

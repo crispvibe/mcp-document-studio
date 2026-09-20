@@ -12,7 +12,12 @@ from unittest import mock
 
 from docx import Document as DocxDocument
 
-from mcp_documents_reader import extract_document_images, read_document
+from mcp_documents_reader import (
+    convert_document,
+    extract_document_images,
+    list_supported_formats,
+    read_document,
+)
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 PNG_BYTES = base64.b64decode(
@@ -21,15 +26,15 @@ PNG_BYTES = base64.b64decode(
 
 
 def create_docx_with_images(target_dir: Path, image_count: int = 2) -> Path:
-    image_path = target_dir / 'sample-image.png'
+    image_path = target_dir / "sample-image.png"
     image_path.write_bytes(PNG_BYTES)
 
     document = DocxDocument()
-    document.add_paragraph('图片测试文档')
+    document.add_paragraph("图片测试文档")
     for _ in range(image_count):
         document.add_picture(str(image_path))
 
-    docx_path = target_dir / 'sample-with-images.docx'
+    docx_path = target_dir / "sample-with-images.docx"
     document.save(str(docx_path))
     return docx_path
 
@@ -159,7 +164,10 @@ class TestReadDocument:
     @mock.patch("mcp_documents_reader._extract_text_with_textutil")
     @mock.patch("mcp_documents_reader._extract_text_with_mdls")
     def test_read_document_doc_file_with_mocked_extractor(
-        self, mock_mdls: mock.MagicMock, mock_textutil: mock.MagicMock, temp_document_dir: str
+        self,
+        mock_mdls: mock.MagicMock,
+        mock_textutil: mock.MagicMock,
+        temp_document_dir: str,
     ) -> None:
         file_path = Path(temp_document_dir) / "legacy.doc"
         file_path.write_bytes(b"fake-doc")
@@ -173,7 +181,10 @@ class TestReadDocument:
     @mock.patch("mcp_documents_reader._extract_text_with_command")
     @mock.patch("mcp_documents_reader._extract_text_with_mdls")
     def test_read_document_ppt_file_with_mocked_extractor(
-        self, mock_mdls: mock.MagicMock, mock_command: mock.MagicMock, temp_document_dir: str
+        self,
+        mock_mdls: mock.MagicMock,
+        mock_command: mock.MagicMock,
+        temp_document_dir: str,
     ) -> None:
         file_path = Path(temp_document_dir) / "slides.ppt"
         file_path.write_bytes(b"fake-ppt")
@@ -296,54 +307,194 @@ class TestExtractDocumentImages:
         result = extract_document_images(str(docx_path))
         payload = json.loads(result)
 
-        assert payload['image_count'] == 2
-        assert len(payload['images']) == 2
-        assert payload['output_dir']
-        assert payload['output_dir_uri']
+        assert payload["image_count"] == 2
+        assert len(payload["images"]) == 2
+        assert payload["output_dir"]
+        assert payload["output_dir_uri"]
 
-        first_image = payload['images'][0]
-        assert first_image['content_type'] == 'image/png'
-        assert first_image['width_px'] == 1
-        assert first_image['height_px'] == 1
-        assert first_image['saved_path']
-        assert first_image['saved_uri']
-        assert Path(first_image['saved_path']).exists()
+        first_image = payload["images"][0]
+        assert first_image["content_type"] == "image/png"
+        assert first_image["width_px"] == 1
+        assert first_image["height_px"] == 1
+        assert first_image["saved_path"]
+        assert first_image["saved_uri"]
+        assert Path(first_image["saved_path"]).exists()
 
     def test_extract_document_images_with_custom_output_dir(
         self, temp_document_dir: str
     ) -> None:
         target_dir = Path(temp_document_dir)
         docx_path = create_docx_with_images(target_dir)
-        export_dir = target_dir / 'exports'
+        export_dir = target_dir / "exports"
 
         result = extract_document_images(str(docx_path), str(export_dir))
         payload = json.loads(result)
 
-        assert payload['output_dir'] == str(export_dir.resolve())
-        for image in payload['images']:
-            saved_path = Path(image['saved_path'])
+        assert payload["output_dir"] == str(export_dir.resolve())
+        for image in payload["images"]:
+            saved_path = Path(image["saved_path"])
             assert saved_path.exists()
             assert saved_path.parent == export_dir.resolve()
 
     def test_extract_document_images_empty_docx(self) -> None:
-        file_path = FIXTURES_DIR / 'empty.docx'
+        file_path = FIXTURES_DIR / "empty.docx"
 
         result = extract_document_images(str(file_path))
         payload = json.loads(result)
 
-        assert payload['image_count'] == 0
-        assert payload['images'] == []
-        assert payload['output_dir'] is None
-        assert payload['output_dir_uri'] is None
+        assert payload["image_count"] == 0
+        assert payload["images"] == []
+        assert payload["output_dir"] is None
+        assert payload["output_dir_uri"] is None
 
     def test_extract_document_images_file_not_found(self) -> None:
-        result = extract_document_images('nonexistent.docx')
+        result = extract_document_images("nonexistent.docx")
 
-        assert 'Error:' in result
-        assert 'not found' in result
+        assert "Error:" in result
+        assert "not found" in result
 
     def test_extract_document_images_unsupported_type(self) -> None:
-        result = extract_document_images(str(FIXTURES_DIR / 'sample.txt'))
+        result = extract_document_images(str(FIXTURES_DIR / "sample.txt"))
 
-        assert 'Error:' in result
-        assert 'DOCX files only' in result
+        assert "Error:" in result
+        assert "DOCX files only" in result
+
+
+class TestReadDocumentNewFormats:
+    """新增格式（HTML/JSON/XML/YAML）的 read_document 测试。"""
+
+    def test_read_document_html_file(self, temp_document_dir: str) -> None:
+        html_path = Path(temp_document_dir) / "page.html"
+        html_path.write_text(
+            "<html><body><h1>网页标题</h1><p>网页正文</p></body></html>",
+            encoding="utf-8",
+        )
+
+        result = read_document(str(html_path))
+
+        assert "网页标题" in result
+        assert "网页正文" in result
+
+    def test_read_document_json_file(self, temp_document_dir: str) -> None:
+        json_path = Path(temp_document_dir) / "data.json"
+        json_path.write_text('{"key":"值"}', encoding="utf-8")
+
+        result = read_document(str(json_path))
+
+        assert '"key": "值"' in result
+
+    def test_read_document_xml_file(self, temp_document_dir: str) -> None:
+        xml_path = Path(temp_document_dir) / "config.xml"
+        xml_path.write_text("<config><name>测试</name></config>", encoding="utf-8")
+
+        result = read_document(str(xml_path))
+
+        assert "<config>" in result
+        assert "测试" in result
+
+    def test_read_document_yaml_file(self, temp_document_dir: str) -> None:
+        yaml_path = Path(temp_document_dir) / "config.yaml"
+        yaml_path.write_text("key: 配置值\n", encoding="utf-8")
+
+        result = read_document(str(yaml_path))
+
+        assert "key: 配置值" in result
+
+    def test_read_document_expanduser(self, temp_document_dir: str) -> None:
+        txt_path = Path(temp_document_dir) / "home.txt"
+        txt_path.write_text("home content", encoding="utf-8")
+
+        with mock.patch.object(
+            Path, "expanduser", autospec=True, return_value=txt_path
+        ):
+            result = read_document("~/home.txt")
+
+        assert "home content" in result
+
+
+class TestConvertDocument:
+    """convert_document MCP 工具函数测试类。"""
+
+    @mock.patch("mcp_documents_reader._convert_with_libreoffice")
+    def test_convert_document_success(
+        self, mock_convert: mock.MagicMock, temp_document_dir: str
+    ) -> None:
+        source_path = Path(temp_document_dir) / "report.docx"
+        source_path.write_bytes(b"fake-docx")
+        target_path = Path(temp_document_dir) / "report.pdf"
+        target_path.write_bytes(b"fake-pdf")
+        mock_convert.return_value = target_path
+
+        result = convert_document(str(source_path), "pdf")
+
+        payload = json.loads(result)
+        assert payload["format"] == "pdf"
+        assert payload["source_format"] == "docx"
+        mock_convert.assert_called_once()
+        call_args = mock_convert.call_args[0]
+        assert call_args[1] == target_path
+
+    @mock.patch("mcp_documents_reader._convert_with_libreoffice")
+    def test_convert_document_custom_output_dir(
+        self, mock_convert: mock.MagicMock, temp_document_dir: str
+    ) -> None:
+        source_path = Path(temp_document_dir) / "report.docx"
+        source_path.write_bytes(b"fake-docx")
+        output_dir = Path(temp_document_dir) / "out"
+        mock_convert.return_value = output_dir / "report.pdf"
+
+        result = convert_document(str(source_path), "pdf", str(output_dir))
+
+        payload = json.loads(result)
+        assert payload["format"] == "pdf"
+        assert mock_convert.call_args[0][1].parent == output_dir
+
+    def test_convert_document_file_not_found(self, temp_document_dir: str) -> None:
+        missing = Path(temp_document_dir) / "missing.docx"
+        result = convert_document(str(missing), "pdf")
+
+        assert "not found" in result
+
+    def test_convert_document_invalid_format(self, temp_document_dir: str) -> None:
+        source_path = Path(temp_document_dir) / "report.docx"
+        source_path.write_bytes(b"fake-docx")
+
+        result = convert_document(str(source_path), "../evil")
+
+        assert "Invalid target format" in result
+
+    def test_convert_document_same_format(self, temp_document_dir: str) -> None:
+        source_path = Path(temp_document_dir) / "report.docx"
+        source_path.write_bytes(b"fake-docx")
+
+        result = convert_document(str(source_path), ".docx")
+
+        assert "already" in result
+
+    @mock.patch("mcp_documents_reader._convert_with_libreoffice", return_value=None)
+    def test_convert_document_libreoffice_unavailable(
+        self, mock_convert: mock.MagicMock, temp_document_dir: str
+    ) -> None:
+        source_path = Path(temp_document_dir) / "report.docx"
+        source_path.write_bytes(b"fake-docx")
+
+        result = convert_document(str(source_path), "pdf")
+
+        assert "LibreOffice conversion is unavailable" in result
+        mock_convert.assert_called_once()
+
+
+class TestListSupportedFormats:
+    """list_supported_formats MCP 工具函数测试类。"""
+
+    def test_list_supported_formats(self) -> None:
+        result = list_supported_formats()
+        payload = json.loads(result)
+
+        assert ".docx" in payload["read"]
+        assert ".pdf" in payload["read"]
+        assert ".html" in payload["read"]
+        assert ".json" in payload["read"]
+        assert ".docx" in payload["write"]["word"]
+        assert ".pptx" in payload["write"]["presentation"]
+        assert ".xlsx" in payload["write"]["spreadsheet"]

@@ -5,6 +5,33 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.5.0] - 2026-09-20
+
+### 新增
+
+- **电子表格生成工具**：新增 `write_spreadsheet`，支持多工作表 `.xlsx`、`.csv`（UTF-8 BOM）生成，以及 `.xls` 的 LibreOffice 转换导出
+- **文档转换工具**：新增 `convert_document`，通过 LibreOffice 将文档转换为 `pdf`、`docx`、`txt`、`html`、`csv` 等格式
+- **格式清单工具**：新增 `list_supported_formats`，返回可读写格式的 JSON 列表
+- **新增读取格式**：`.html` / `.htm`（忽略脚本与样式的正文提取）、`.json`（解析并格式化输出）、`.xml` / `.yaml` / `.yml`（文本提取）、`.rtf`（控制字解析）、`.xlsm` / `.xlsb` / `.ods`（电子表格读取）
+- **旧版二进制兜底提取**：`.doc` / `.ppt` / `.xls` 在无任何外部提取器的机器上（如未装 LibreOffice 的 Windows）回退到二进制文本流提取，保证开箱可读
+- **calamine 回退**：新增 `python-calamine` 依赖，`.xls` / `.xlsb` / `.ods` 优先经由纯 Python 引擎读取
+
+### 修复
+
+- **`.xls` 读取失效**：`.xls` 原先错误地走 openpyxl 路径必然报错，现支持 calamine、xls2csv 与 LibreOffice 转换多条回退链路
+- **PPTX 幻灯片顺序错误**：原先按文件名数字排序，现改为按 `presentation.xml` 的 `sldIdLst` 顺序读取（缺省时回退文件名排序）
+- **DOCX 内容顺序错乱**：段落与表格现按文档实际顺序交错提取，不再将全部表格堆到文末
+- **EPUB 路径解析**：manifest `href` 中的 URL 编码与 `#` 片段现会正确解码与剥离
+- **BOM 残留**：UTF-8 BOM 不再残留在文本类读取结果中
+- **加密 PDF**：对空密码加密的 PDF 会尝试解密后再提取文本
+- **`~` 路径**：读取类工具与写入工具一致，支持 `~` 主目录展开
+
+### 变更
+
+- **wheel 打包修复**：构建产物不再把 `tests/`、`docs/` 等仓库文件装入 site-packages，仅发布模块与 `py.typed`
+- **类型检查**：修复全部 basedpyright 错误与告警，补充 `py.typed` 标记
+- **代码规范**：清理全部 ruff 检查违例并统一格式化
+
 ## [1.4.0] - 2026-04-14
 
 ### 新增
